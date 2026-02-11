@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Google 级基础样式 ── */
+
+@layer base {
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-surface-0 text-text-primary font-sans;
+    font-feature-settings: "ss01", "cv01", "cv11";
+  }
+
+  /* 滚动条 — 极简风格 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+@layer components {
+  /* 卡片基础 */
+  .card {
+    @apply bg-surface-1 border border-surface-3/50 rounded-xl;
+    backdrop-filter: blur(12px);
+  }
+  .card-hover {
+    @apply card transition-all duration-200;
+  }
+  .card-hover:hover {
+    @apply border-surface-3 bg-surface-2;
+  }
+
+  /* 信号徽章 */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium tracking-wide;
+  }
+  .badge-bull {
+    @apply badge bg-bull-dim text-bull;
+  }
+  .badge-bear {
+    @apply badge bg-bear-dim text-bear;
+  }
+  .badge-neutral {
+    @apply badge bg-surface-3 text-text-secondary;
+  }
+  .badge-warn {
+    @apply badge bg-warn-dim text-warn;
+  }
+  .badge-anomaly {
+    @apply badge bg-anomaly-dim text-anomaly;
+  }
+
+  /* 数值显示 — 等宽数字 */
+  .mono-num {
+    @apply font-mono tabular-nums;
+  }
+
+  /* 得分条 */
+  .score-bar {
+    @apply h-1.5 rounded-full transition-all duration-500 ease-out;
+  }
+
+  /* 脉冲点 */
+  .pulse-dot {
+    @apply relative inline-flex h-2 w-2;
+  }
+  .pulse-dot::before {
+    content: '';
+    @apply absolute inset-0 rounded-full bg-bull animate-ping opacity-50;
+  }
+  .pulse-dot::after {
+    content: '';
+    @apply absolute inset-0 rounded-full bg-bull;
+  }
+
+  /* 因子得分条 */
+  .factor-bar-container {
+    @apply relative h-1 bg-surface-3 rounded-full overflow-hidden;
+  }
+  .factor-bar-positive {
+    @apply absolute top-0 h-full bg-bull rounded-full transition-all duration-300;
+    left: 50%;
+  }
+  .factor-bar-negative {
+    @apply absolute top-0 h-full bg-bear rounded-full transition-all duration-300;
+    right: 50%;
+  }
+  .factor-bar-center {
+    @apply absolute top-0 w-px h-full bg-text-tertiary;
+    left: 50%;
+  }
+}
+
+@layer utilities {
+  /* 文字渐变 */
+  .text-gradient-bull {
+    @apply bg-gradient-to-r from-bull to-emerald-300 bg-clip-text text-transparent;
+  }
+  .text-gradient-bear {
+    @apply bg-gradient-to-r from-bear to-rose-300 bg-clip-text text-transparent;
+  }
+}

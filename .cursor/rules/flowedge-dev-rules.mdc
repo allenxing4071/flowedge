@@ -1,0 +1,276 @@
+---
+description: FlowEdge 项目开发规则 - 订单流驱动的量化特征引擎
+globs:
+alwaysApply: true
+---
+
+# FlowEdge 项目开发规则
+
+## 🧭 Rules × Skills 协作框架
+
+> Rules 负责"强制边界"，Skills 负责"落地方法"。执行顺序：**先遵守 Rules，再按 Skills 执行**。
+
+## 🏛️ 高级标准优先（金融级）
+
+- 默认以 **Google/Apple 工程标准 + 金融级安全/可靠性** 为上限
+- 用户指令与安全/合规/可靠性冲突时，必须提示风险并给出更高标准方案
+- 关键变更必须可追溯（验证记录 + 结果说明）
+
+### Skill 入口路由表
+
+| 用户意图（触发词） | 执行 Skill | 必须遵守的 Rules |
+|---|---|---|
+| "项目结构/怎么跑/入门" | `.skills/项目入门/SKILL.md` | — |
+| "部署/上线/重启/同步代码" | `.skills/部署运维/SKILL.md` | R6(部署) R0(变更控制) |
+| "数据源/数据质量/噪声/采集" | `.skills/数据质量/SKILL.md` | R0(变更控制) R4(速率限制) |
+| "特征/指标/计算/OFI/CVD/VPIN" | `.skills/特征工程/SKILL.md` | R0(变更控制) |
+| 修改代码/修 Bug/加功能 | 无专属 Skill，按 Rules 执行 | R0(变更控制) R1(验证) R7(注释) |
+| 新经验/踩坑 | 写入对应 Skill 的"经验沉淀"区 | R8(经验沉淀) |
+
+### 原则
+- Rules 只保留"必须/禁止/流程边界"，具体方法沉淀到 Skills
+- 任何新增经验，必须回写到对应 Skill（见 R8）
+- Skill 内的操作仍须遵守 Rules 边界
+
+---
+
+## 🔴 R0. 变更范围控制（核心代码保护）【最高优先级】
+
+> ⚠️ **未得到用户明确同意，不得改动核心代码；遇到什么问题，只修改什么问题。**
+
+- **默认策略：最小改动**
+  - 只修改为解决当前 Bug/需求所必需的代码路径
+  - 禁止"顺手重构/优化/美化/统一风格/批量格式化"
+
+- **核心模块清单**（命中即需授权）：
+  - `flowedge/feeds/agg_trade.py` — aggTrade WS 流
+  - `flowedge/feeds/depth.py` — depth@100ms WS 流
+  - `flowedge/feeds/book_ticker.py` — bookTicker WS 流
+  - `flowedge/feeds/mark_price.py` — markPrice@1s WS 流
+  - `flowedge/feeds/force_order.py` — forceOrder WS 流（全市场清算）
+  - `flowedge/feeds/kline.py` — kline@1m WS 流
+  - `flowedge/feeds/binance_rest.py` — 币安 REST 全量采集器（OI/多空比/大户/K线/24h）
+  - `flowedge/feeds/market_data.py` — Coinglass 中频数据
+  - `flowedge/feeds/external.py` — 外部数据源（恐慌贪婪/Coinalyze/ETF）
+  - `flowedge/features/engine.py` — 特征引擎聚合层（11 特征 × N 币种）
+  - `flowedge/core/rate_limiter.py` — API 速率限制器
+  - `flowedge/config.py` — 全局配置
+  - `flowedge/api.py` — FastAPI 服务层
+
+- **禁止越权扩展范围**
+- **结果可解释**：改了哪里 → 解决了什么 → 如何验证
+
+---
+
+## 🔴 R1. 功能验证规范【高优先级】
+
+### 阶段 A：接口快速验证
+- `curl http://localhost:8005/health` — 健康检查
+- `curl http://localhost:8005/status` — 系统状态
+- `curl http://localhost:8005/features/snapshot?symbol=BTCUSDT` — 特征快照
+
+### 阶段 B：完整功能验证
+- 验证所有 WS 流已连接（日志中有"已连接"）
+- 验证 REST 采集器完成首轮采集
+- 验证特征输出包含所有 11 个字段
+- 验证多币种数据独立正确
+
+### 验证标准
+```
+❌ 仅通过代码审查 → 不合格
+✅ 接口验证 + 完整数据展示 → 合格
+```
+
+---
+
+## 🔴 R2. 数据架构分层规范【强制】
+
+> FlowEdge 采用三层数据架构，每层职责清晰。
+
+### 实时层（WebSocket，毫秒级）
+| 流 | 数据 | 用途 |
+|---|---|---|
+| aggTrade | 逐笔成交 | CVD, VPIN, 大单检测 |
+| depth@100ms | 订单簿更新 | OFI, 深度变化/假墙 |
+| bookTicker | 最优买卖报价 | Book Imbalance L1 |
+| markPrice@1s | 标记价格+资金费率 | 费率追踪, 基差 |
+| forceOrder | 全市场清算事件 | 清算级联检测 |
+| kline@1m | 实时1分钟K线 | 趋势上下文 |
+
+### 中频层（REST 5 分钟轮询）
+| 采集器 | 数据 | 用途 |
+|---|---|---|
+| BinanceREST | OI/多空比/大户比/费率历史/K线5档/24h统计 | 情绪+趋势+OI |
+| Coinglass | 全网OI分交易所/清算/ETF流向 | 全市场视角 |
+| Coinalyze | 全网聚合OI/费率/爆仓/多空比 | 跨所对比 |
+| FearGreed | 恐慌贪婪指数 | 市场情绪 |
+
+### 特征层（11 个计算器）
+| # | 特征 | 数据源 |
+|---|---|---|
+| 1 | CVD | aggTrade |
+| 2 | OFI | depth |
+| 3 | VPIN | aggTrade |
+| 4 | 大单检测 | aggTrade |
+| 5 | 深度变化/假墙 | depth |
+| 6 | Book Imbalance | bookTicker |
+| 7 | 资金费率 | markPrice@1s |
+| 8 | 清算级联 | forceOrder + Coinglass |
+| 9 | OI变化 | BinanceREST + Coinglass |
+| 10 | 多空情绪 | BinanceREST + FearGreed + Coinalyze |
+| 11 | 趋势上下文 | kline WS + BinanceREST K线 |
+
+---
+
+## 🔴 R3. 时间与时区统一规范【强制】
+
+- **存储/计算**：统一使用 **UTC**（timezone-aware）
+- **API 输出**：毫秒时间戳（`int(time.time() * 1000)`）
+- **币安时间戳**：毫秒级，转换时使用 `datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)`
+- ❌ `datetime.utcnow()` / `datetime.now()`（无 tzinfo）
+- ✅ `datetime.now(timezone.utc)`
+
+---
+
+## 🔴 R4. API 速率限制规范【强制】
+
+> 多币种扩展时，速率限制是系统安全的基础。
+
+| API 源 | 限制 | 速率限制器配置 |
+|---|---|---|
+| 币安 REST | 2400 权重/分钟 | `binance`: 32/s, burst=100 |
+| Coinglass | 30 次/分钟 | `coinglass`: 0.5/s, burst=10 |
+| Coinalyze | 40 次/分钟 | `coinalyze`: 0.66/s, burst=10 |
+| 外部免费 API | 保守限速 | `external`: 1/s, burst=5 |
+
+- **所有 REST 请求必须通过 `rate_limiters.get("xxx").acquire()` 获取令牌**
+- 禁止绕过速率限制器直接发请求
+- 新增数据源时必须注册对应的限制器
+
+---
+
+## 🔴 R5. 安全与密钥保护【强制】
+
+- 禁止在代码/日志/输出中泄露 API 密钥
+- 所有敏感配置只通过 `.env` 加载，已加入 `.gitignore`
+- `.env.example` 只展示配置项名称，不包含真实值
+- 禁止将运行时数据上传到公共仓库
+
+---
+
+## 🔴 R6. 部署与环境规范【强制】
+
+### 生产环境（47.254.246.53 云服务器，复用 KKline 的阿里云）
+- FlowEdge 通过 **Docker Compose 单容器** 运行
+- 容器名：`flowedge-backend`，端口映射 `8005:8000`
+- HTTPS 由 TradeDesk 的 `tradedesk-nginx` 容器反代
+- 数据持久化：`./data` 卷挂载
+- 部署脚本：`scripts/deploy-flowedge.sh`（Mac → 服务器）
+
+### 本地开发（Mac）
+- 直接运行：`python3 -m flowedge`
+- 默认端口：8005
+- 环境变量：PORT（可覆盖端口）
+
+### 部署方式：统一使用 `scripts/deploy-flowedge.sh`【强制】
+- 未经用户明确授权，禁止执行任何部署操作
+- 禁止自动执行 `git push`
+- 禁止在容器内直接修改代码
+
+### 常用命令速查
+```bash
+cd ~/Documents/soft/FlowEdge
+
+# ——— 云服务器 ———
+./scripts/deploy-flowedge.sh c       # 一键部署
+./scripts/deploy-flowedge.sh cs      # 查看状态
+./scripts/deploy-flowedge.sh cl      # 查看日志
+
+# ——— 本地 ———
+python3 -m flowedge                  # 启动服务
+python3 -m pytest tests/ -v         # 运行测试
+curl http://localhost:8005/status    # 系统状态
+curl http://localhost:8005/features/snapshot  # 特征快照
+```
+
+---
+
+## R7. 文件用途说明与中文注释【强制】
+
+- 新建/修改文件时，文件顶部必须有中文用途说明（1-3 行）
+- 代码注释优先使用中文
+
+---
+
+## 🔴 R8. 经验沉淀规范【强制】
+
+### 沉淀路由
+| 经验类型 | 写入 Skill |
+|---|---|
+| 币安 WS/REST API 坑位 | `.skills/数据质量/SKILL.md` |
+| Coinglass/Coinalyze API 问题 | `.skills/数据质量/SKILL.md` |
+| 特征计算逻辑/算法改进 | `.skills/特征工程/SKILL.md` |
+| 部署/环境/Docker 问题 | `.skills/部署运维/SKILL.md` |
+| 项目结构/架构变更 | `.skills/项目入门/SKILL.md` |
+
+### 经验条目模板
+```
+### 经验：[简要标题]
+- 现象:
+- 根因:
+- 解决:
+- 验证:
+- 关联: (Rules 编号 / 文件 / 接口)
+- 日期:
+```
+
+---
+
+## R9. 文档输出限制
+- 除非用户明确要求，禁止自动创建 `.md` 文件
+
+## R10. Git Push 限制
+- 执行 git push 前必须等待用户明确授权
+
+## R11. 任务执行节奏
+- 除非用户明确说"直接做"，否则先确认理解+方案+是否开始
+
+## 🔴 R12. 方案建议必须基于数据，禁止迎合【强制】
+- 禁止"A 和 B 各有优劣"的和稀泥结论
+- 涉及算法/参数选择必须有数据支撑（回测/论文/行业实践）
+- 诚实标注不确定性
+
+---
+
+## 核心原则
+
+> **Ask First, Act Later** — 先问再做
+>
+> **数据说话，不迎合** — 方案建议必须有数据支撑（R12）
+>
+> **速率限制不可绕** — 所有 REST 请求必须走限制器（R4）
+>
+> **经验必沉淀** — 新坑位/新实践必须写回对应 Skill（R8）
+
+---
+
+## 附录：环境速查
+
+### 项目路径
+- FlowEdge 后端（本地）：`~/Documents/soft/FlowEdge`
+- FlowEdge 后端（服务器）：`/opt/FlowEdge`（47.254.246.53）
+
+### 访问地址
+- 本地健康检查：http://localhost:8005/health
+- 本地系统状态：http://localhost:8005/status
+- 本地特征快照：http://localhost:8005/features/snapshot
+- 本地 SSE 流：http://localhost:8005/features/stream
+- 本地速率限制器：http://localhost:8005/rate-limits
+- 本地 API 文档：http://localhost:8005/docs
+
+### Docker 容器
+- `flowedge-backend`（端口 8005:8000）— 特征引擎
+
+### 关键连接
+- SSH：`ssh -i ~/Documents/soft/KKline/deploy/LH.pem -p 2222 root@47.254.246.53`
+- Nginx 反代：TradeDesk `tradedesk-nginx` → `172.19.0.1:8005`

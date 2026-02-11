@@ -1,0 +1,21 @@
+# FlowEdge - 订单流驱动的量化交易系统
+# Phase 1: 数据管道 + 特征引擎
+
+# WebSocket 实时数据流
+websockets>=12.0
+
+# 高性能数值计算（环形缓冲 + 特征聚合）
+numpy>=1.26.0
+
+# 快速 JSON 序列化（比 stdlib json 快 5-10x）
+orjson>=3.9.0
+
+# API 服务 + SSE
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
+# HTTP 客户端（REST API 备用）
+httpx>=0.27.0
+
+# 环境变量
+python-dotenv>=1.0.0

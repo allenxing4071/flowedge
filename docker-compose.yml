@@ -1,0 +1,33 @@
+# FlowEdge Docker Compose 配置
+# 后端 v3.0（特征引擎 + 信号层 + 对接桥）+ 交易驾驶舱 UI
+
+services:
+  backend:
+    build: .
+    container_name: flowedge-backend
+    ports:
+      - "8005:8000"
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: flowedge-cockpit
+    ports:
+      - "3005:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8005
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
