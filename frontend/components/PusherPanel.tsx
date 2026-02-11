@@ -104,8 +104,8 @@ export default function PusherPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="card p-6 flex items-center justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-bold text-text-primary">半自动推送</h2>
           <p className="text-sm text-text-tertiary mt-0.5">
             强信号自动提交到 KKline，人工审批后执行交易
@@ -116,13 +116,13 @@ export default function PusherPanel() {
           onClick={() => handleUpdate({ enabled: !status.enabled })}
           disabled={updating}
           title={status.enabled ? '关闭推送器' : '开启推送器'}
-          className={`relative w-14 h-7 rounded-full transition-colors ${
+          className={`relative flex-shrink-0 w-14 h-7 rounded-full transition-colors ${
             status.enabled ? 'bg-bull' : 'bg-surface-3'
           }`}
         >
           <span
-            className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${
-              status.enabled ? 'translate-x-7' : 'translate-x-0.5'
+            className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${
+              status.enabled ? 'translate-x-[26px]' : 'translate-x-0'
             }`}
           />
         </button>
@@ -238,49 +238,171 @@ export default function PusherPanel() {
         </div>
       </div>
 
-      {/* 最近推送记录 */}
+      {/* 最近推送记录（参考 KKline AI 决策记录卡片风格） */}
       {status.recent_pushes.length > 0 && (
         <div className="card p-6">
-          <h3 className="text-base font-semibold text-text-primary mb-4">最近推送</h3>
-          <div className="space-y-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-base font-semibold text-text-primary">最近推送</h3>
+            <span className="text-xs text-text-tertiary">
+              共 {status.stats.total_pushes} 次
+            </span>
+          </div>
+          <div className="space-y-3">
             {status.recent_pushes.map((p, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-3 py-2 border-b border-surface-2/50 last:border-0 text-sm"
-              >
-                <span className={`w-2 h-2 rounded-full ${p.success ? 'bg-bull' : 'bg-bear'}`} />
-                <span className="font-medium text-text-primary w-20">
-                  {p.symbol.replace('USDT', '')}
-                </span>
-                <span className={`font-medium ${
-                  p.signal.includes('BUY') ? 'text-bull' : 'text-bear'
-                }`}>
-                  {p.signal}
-                </span>
-                <span className="mono-num text-text-secondary">
-                  conf={((p.confidence) * 100).toFixed(0)}%
-                </span>
-                {p.kkline_signal_id && (
-                  <span className="text-xs text-info">
-                    #{p.kkline_signal_id}
-                  </span>
-                )}
-                {p.error && (
-                  <span className="text-xs text-bear truncate max-w-[200px]">
-                    {p.error}
-                  </span>
-                )}
-                <span className="ml-auto text-xs text-text-tertiary mono-num">
-                  {new Date(p.push_time * 1000).toLocaleTimeString('zh-CN', {
-                    hour12: false,
-                    timeZone: 'Asia/Shanghai',
-                  })}
-                </span>
-              </div>
+              <PushCard key={i} push={p} />
             ))}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// 推送记录卡片（参考 KKline DecisionCard 风格）
+// ═══════════════════════════════════════════
+
+/** 错误信息友好化 — 把原始 HTTP/JSON 错误转为人话 */
+function friendlyError(raw: string): string {
+  if (!raw) return '未知错误';
+  // HTTP 状态码
+  if (raw.includes('503')) return 'KKline 服务暂时不可用（503），可能正在重启';
+  if (raw.includes('502')) return 'KKline 网关错误（502），服务可能未启动';
+  if (raw.includes('500')) return 'KKline 服务器内部错误（500）';
+  if (raw.includes('401') || raw.includes('Unauthorized')) return 'API 认证失败，请检查 API Key';
+  if (raw.includes('403') || raw.includes('Forbidden')) return '权限不足，请检查 API Key 权限';
+  if (raw.includes('404')) return '接口不存在（404），请检查 KKline 版本';
+  if (raw.includes('timeout') || raw.includes('Timeout')) return '请求超时，KKline 响应过慢';
+  if (raw.includes('ECONNREFUSED') || raw.includes('Connection refused')) return 'KKline 连接被拒绝，服务可能未启动';
+  if (raw.includes('fetch failed') || raw.includes('network')) return '网络连接失败';
+  // "detail" JSON 字段提取
+  const detailMatch = raw.match(/"detail"\s*:\s*"([^"]+)"/);
+  if (detailMatch) return detailMatch[1];
+  // 控制接口未启用
+  if (raw.includes('未启用') || raw.includes('disabled')) return '推送接口未启用，请检查配置';
+  // 兜底：截取前 120 字符
+  return raw.length > 120 ? raw.slice(0, 120) + '…' : raw;
+}
+
+/** 信号→中文标签 + 颜色 */
+const SIGNAL_STYLE: Record<string, { label: string; color: string; bg: string; icon: string }> = {
+  STRONG_BUY:  { label: '强烈看多', color: '#00ffaa', bg: 'rgba(0,255,170,0.10)', icon: '🟢' },
+  BUY:         { label: '看多',     color: '#00ffaa', bg: 'rgba(0,255,170,0.06)', icon: '🟢' },
+  SELL:        { label: '看空',     color: '#ff3366', bg: 'rgba(255,51,102,0.06)', icon: '🔴' },
+  STRONG_SELL: { label: '强烈看空', color: '#ff3366', bg: 'rgba(255,51,102,0.10)', icon: '🔴' },
+};
+
+function PushCard({ push }: {
+  push: {
+    symbol: string;
+    signal: string;
+    score: number;
+    confidence: number;
+    success: boolean;
+    error: string | null;
+    kkline_signal_id: number | null;
+    push_time: number;
+  };
+}) {
+  const sig = SIGNAL_STYLE[push.signal] || {
+    label: push.signal, color: '#94a3b8', bg: 'rgba(255,255,255,0.04)', icon: '⚪',
+  };
+  const isBuy = push.signal.includes('BUY');
+  const borderColor = push.success ? sig.color : '#ff3366';
+  const confPct = Math.round((push.confidence ?? 0) * 100);
+
+  // 北京时间格式化
+  const timeStr = push.push_time
+    ? new Date(push.push_time * 1000).toLocaleTimeString('zh-CN', {
+        hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+        timeZone: 'Asia/Shanghai',
+      })
+    : '--:--';
+
+  return (
+    <div
+      className="rounded-lg overflow-hidden transition-all hover:brightness-110"
+      style={{ borderLeft: `3px solid ${borderColor}`, background: 'rgba(255,255,255,0.02)' }}
+    >
+      <div className="flex items-start gap-3 px-4 py-3">
+        {/* 左：信号图标 */}
+        <div
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0 mt-0.5"
+          style={{ background: sig.bg }}
+        >
+          {sig.icon}
+        </div>
+
+        {/* 中：核心信息 */}
+        <div className="flex-1 min-w-0">
+          {/* 第一行：标签组 */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* 币种 */}
+            <span className="text-sm font-bold text-text-primary">
+              {push.symbol.replace('USDT', '')}
+            </span>
+            {/* 信号方向 */}
+            <span
+              className="text-xs font-medium px-1.5 py-0.5 rounded"
+              style={{ background: sig.bg, color: sig.color }}
+            >
+              {isBuy ? '▲' : '▼'} {sig.label}
+            </span>
+            {/* 置信度 */}
+            <span
+              className="text-xs font-mono"
+              style={{ color: confPct >= 60 ? '#00e5ff' : '#94a3b8' }}
+            >
+              conf={confPct}%
+            </span>
+            {/* 推送结果 */}
+            {push.success ? (
+              <span
+                className="text-xs font-medium px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(0,255,170,0.08)', color: '#00ffaa' }}
+              >
+                ✓ 已推送
+              </span>
+            ) : (
+              <span
+                className="text-xs font-medium px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(255,51,102,0.08)', color: '#ff3366' }}
+              >
+                ✕ 失败
+              </span>
+            )}
+          </div>
+
+          {/* 第二行：详情 */}
+          <div className="mt-1.5 flex items-center gap-3 text-xs flex-wrap">
+            {/* 评分 */}
+            <span className="text-text-secondary">
+              score <span className="font-mono text-text-primary">{push.score?.toFixed(3) ?? '--'}</span>
+            </span>
+            {/* KKline 信号 ID */}
+            {push.kkline_signal_id && (
+              <span style={{ color: '#00e5ff' }}>
+                KKline #{push.kkline_signal_id}
+              </span>
+            )}
+          </div>
+          {/* 错误信息（完整显示 + 友好化） */}
+          {push.error && (
+            <div
+              className="mt-2 text-xs leading-relaxed px-3 py-2 rounded-md break-all"
+              style={{ background: 'rgba(255,51,102,0.06)', color: '#ff6b8a' }}
+            >
+              <span className="font-medium" style={{ color: '#ff3366' }}>失败原因：</span>
+              {friendlyError(push.error)}
+            </div>
+          )}
+        </div>
+
+        {/* 右：时间 */}
+        <div className="text-right shrink-0">
+          <div className="text-xs font-mono text-text-tertiary">{timeStr}</div>
+        </div>
+      </div>
     </div>
   );
 }

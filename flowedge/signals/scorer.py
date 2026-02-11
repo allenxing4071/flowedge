@@ -1,5 +1,5 @@
 """
-多因子评分引擎 — 将 11 个原始特征转化为标准化方向分数。
+多因子评分引擎 — 将 14 个原始特征转化为标准化方向分数。
 
 设计原则：
   1. 每个特征独立评分 → [-1.0, +1.0]（+1 看多, -1 看空, 0 中性）
@@ -51,29 +51,52 @@ class CompositeSignal:
 # 宏观因子（趋势 + 情绪）提供方向背景
 
 DEFAULT_WEIGHTS = {
-    "cvd":            0.15,   # 成交量 delta — 实时买卖力量
-    "ofi":            0.15,   # 订单流不平衡 — 挂单变化
-    "book_imbalance": 0.10,   # L1 盘口压力
-    "large_trade":    0.12,   # 大单资金流 — 聪明钱
-    "depth_change":   0.08,   # 深度变化 + 假墙检测
-    "funding":        0.10,   # 资金费率 — 反向指标
-    "liquidation":    0.08,   # 清算级联 — 极端市况
-    "sentiment":      0.07,   # 多空情绪 + 恐慌贪婪
-    "trend":          0.08,   # 多周期趋势一致性
-    "vpin":           0.04,   # 知情交易概率
-    "oi":             0.03,   # 持仓量变化
+    # ── 微观结构因子（实时边）──
+    "cvd":            0.12,   # 成交量 delta — 实时买卖力量
+    "ofi":            0.12,   # 订单流不平衡 — 挂单变化
+    "book_imbalance": 0.08,   # L1 盘口压力
+    "large_trade":    0.10,   # 大单资金流 — 聪明钱
+    "depth_change":   0.06,   # 深度变化 + 假墙检测
+    # ── 做市商逻辑因子（新增）──
+    "vwap":           0.08,   # VWAP 偏离度 — 均值回归/趋势确认
+    "volume_profile": 0.07,   # Volume Profile — 支撑阻力判断
+    "absorption":     0.10,   # 吸收检测 — 大资金意图暴露
+    # ── 宏观/情绪因子 ──
+    "funding":        0.08,   # 资金费率 — 反向指标
+    "liquidation":    0.06,   # 清算级联 — 极端市况
+    "sentiment":      0.05,   # 多空情绪 + 恐慌贪婪
+    "trend":          0.05,   # 多周期趋势一致性
+    "vpin":           0.02,   # 知情交易概率
+    "oi":             0.01,   # 持仓量变化
 }
 # 权重合计 = 1.00
 
 
 # ── 评分阈值 ──
 
-# 综合信号阈值
+# 综合信号阈值（入场阈值 — 从 NEUTRAL 进入方向性信号）
 SIGNAL_THRESHOLDS = {
     "strong_buy":  0.40,
     "buy":         0.15,
     "sell":       -0.15,
     "strong_sell": -0.40,
+}
+
+# 滞后区退出阈值（从方向性信号回到 NEUTRAL 的阈值，比入场低）
+# 例：score 0.15 触发 BUY，但需跌到 0.08 以下才回 NEUTRAL
+# 这避免了信号在入场阈值附近反复抖动
+EXIT_THRESHOLDS = {
+    "buy_exit":         0.08,   # BUY → NEUTRAL 需 score < 0.08
+    "sell_exit":       -0.08,   # SELL → NEUTRAL 需 score > -0.08
+    "strong_buy_exit":  0.25,   # STRONG_BUY → BUY 需 score < 0.25
+    "strong_sell_exit": -0.25,  # STRONG_SELL → SELL 需 score > -0.25
+}
+
+# 反转阈值（从 BUY→SELL 或 SELL→BUY，需要更强的信号）
+# 防止 score 在零点附近振荡导致 whipsaw
+REVERSAL_THRESHOLDS = {
+    "buy_to_sell":     -0.25,   # BUY→SELL 需 score < -0.25（正常 SELL 入场仅需 -0.15）
+    "sell_to_buy":      0.25,   # SELL→BUY 需 score > 0.25（正常 BUY 入场仅需 0.15）
 }
 
 
@@ -93,14 +116,17 @@ class SignalScorer:
 
     def __init__(self, weights: Optional[dict] = None):
         self.weights = weights or DEFAULT_WEIGHTS.copy()
+        # 每币种上一次确认的信号（用于滞后区判断）
+        self._prev_signals: dict[str, str] = {}
 
-    def score(self, features: dict, timestamp_ms: int = 0) -> CompositeSignal:
+    def score(self, features: dict, timestamp_ms: int = 0, symbol: str = "") -> CompositeSignal:
         """
         对单个币种的特征快照进行多因子评分。
 
         参数:
             features: 来自 FeatureEngine.get_snapshot()[symbol] 的字典
             timestamp_ms: 当前时间戳
+            symbol: 币种（用于滞后区状态追踪）
 
         返回:
             CompositeSignal
@@ -140,6 +166,15 @@ class SignalScorer:
         # 11. OI — 持仓量变化
         factors.append(self._score_oi(features.get("open_interest", {})))
 
+        # 12. VWAP — 价格偏离度（做市商逻辑）
+        factors.append(self._score_vwap(features.get("vwap", {})))
+
+        # 13. Volume Profile — 支撑阻力判断（做市商逻辑）
+        factors.append(self._score_volume_profile(features.get("volume_profile", {})))
+
+        # 14. Absorption — 吸收检测（做市商逻辑）
+        factors.append(self._score_absorption(features.get("absorption", {})))
+
         # ── 加权合成 ──
         total_score = sum(f.score * f.weight for f in factors)
 
@@ -154,17 +189,11 @@ class SignalScorer:
         if dominant >= 8:
             confidence = min(1.0, confidence * 1.2)
 
-        # ── 信号分级 ──
-        if total_score >= SIGNAL_THRESHOLDS["strong_buy"]:
-            signal = "STRONG_BUY"
-        elif total_score >= SIGNAL_THRESHOLDS["buy"]:
-            signal = "BUY"
-        elif total_score <= SIGNAL_THRESHOLDS["strong_sell"]:
-            signal = "STRONG_SELL"
-        elif total_score <= SIGNAL_THRESHOLDS["sell"]:
-            signal = "SELL"
-        else:
-            signal = "NEUTRAL"
+        # ── 信号分级（带滞后区，防止临界点抖动）──
+        prev_sig = self._prev_signals.get(symbol, "NEUTRAL")
+        signal = self._classify_with_hysteresis(total_score, prev_sig)
+        if symbol:
+            self._prev_signals[symbol] = signal
 
         return CompositeSignal(
             signal=signal,
@@ -176,6 +205,75 @@ class SignalScorer:
             neutral_count=neutral,
             timestamp_ms=timestamp_ms,
         )
+
+    # ══════════════════════════════════════════
+    # 滞后区信号分类
+    # ══════════════════════════════════════════
+
+    @staticmethod
+    def _classify_with_hysteresis(score: float, prev_signal: str) -> str:
+        """
+        带滞后区 + 反转保护 的信号分类。
+
+        三层保护：
+          1. 入场阈值（NEUTRAL→方向）：BUY=0.15, SELL=-0.15
+          2. 退出阈值（方向→NEUTRAL）：buy_exit=0.08, sell_exit=-0.08
+          3. 反转阈值（BUY→SELL 或 SELL→BUY）：需 ±0.25，防 whipsaw
+
+        例：
+          - NEUTRAL + score=0.16 → BUY（入场）
+          - BUY + score=0.12 → BUY（滞后区保持）
+          - BUY + score=0.07 → NEUTRAL（跌出滞后区）
+          - BUY + score=-0.16 → NEUTRAL（未达反转阈值 -0.25，先回 NEUTRAL）
+          - BUY + score=-0.26 → SELL（达到反转阈值，直接反转）
+        """
+        th = SIGNAL_THRESHOLDS
+        ex = EXIT_THRESHOLDS
+        rv = REVERSAL_THRESHOLDS
+
+        if prev_signal in ("STRONG_BUY", "BUY"):
+            # 当前持多 — 优先检查反转（需更强信号），再检查退出
+            if score >= th["strong_buy"]:
+                return "STRONG_BUY"
+            elif score >= ex["buy_exit"]:
+                # 滞后区内 — 保持 BUY
+                return "BUY" if prev_signal == "BUY" else (
+                    "STRONG_BUY" if score >= ex["strong_buy_exit"] else "BUY"
+                )
+            elif score <= rv["buy_to_sell"]:
+                # 达到反转阈值 — 直接反转到 SELL
+                return "STRONG_SELL" if score <= th["strong_sell"] else "SELL"
+            else:
+                # 未达反转阈值但跌出买方滞后区 — 回到 NEUTRAL
+                return "NEUTRAL"
+
+        elif prev_signal in ("STRONG_SELL", "SELL"):
+            # 当前持空 — 优先检查反转，再检查退出
+            if score <= th["strong_sell"]:
+                return "STRONG_SELL"
+            elif score <= ex["sell_exit"]:
+                return "SELL" if prev_signal == "SELL" else (
+                    "STRONG_SELL" if score <= ex["strong_sell_exit"] else "SELL"
+                )
+            elif score >= rv["sell_to_buy"]:
+                # 达到反转阈值 — 直接反转到 BUY
+                return "STRONG_BUY" if score >= th["strong_buy"] else "BUY"
+            else:
+                # 未达反转阈值但超出卖方滞后区 — 回到 NEUTRAL
+                return "NEUTRAL"
+
+        else:
+            # NEUTRAL — 用入场阈值（标准门槛）
+            if score >= th["strong_buy"]:
+                return "STRONG_BUY"
+            elif score >= th["buy"]:
+                return "BUY"
+            elif score <= th["strong_sell"]:
+                return "STRONG_SELL"
+            elif score <= th["sell"]:
+                return "SELL"
+            else:
+                return "NEUTRAL"
 
     # ══════════════════════════════════════════
     # 各因子评分逻辑
@@ -412,3 +510,123 @@ class SignalScorer:
             "oi", round(score, 4), w, change,
             f"OI变化 {change:.1f}% 全网1h={global_1h:.1f}%"
         )
+
+    # ══════════════════════════════════════════
+    # 做市商逻辑因子（新增）
+    # ══════════════════════════════════════════
+
+    def _score_vwap(self, vwap: dict) -> FactorScore:
+        """
+        VWAP: 价格偏离 VWAP 的程度。
+        逻辑：
+          - 价格远高于 VWAP → 过度拉升，回落概率大 → 看空（均值回归）
+          - 价格远低于 VWAP → 过度打压，反弹概率大 → 看多（均值回归）
+          - 短周期和长周期偏离方向一致 → 趋势确认，增强信号
+        """
+        w = self.weights.get("vwap", 0.08)
+        dev_5m = vwap.get("deviation_5m_pct", 0)
+        dev_15m = vwap.get("deviation_15m_pct", 0)
+        dev_1h = vwap.get("deviation_1h_pct", 0)
+        vwap_1h = vwap.get("vwap_1h", 0)
+
+        if vwap_1h <= 0:
+            return FactorScore("vwap", 0.0, w, 0.0, "VWAP 数据不足")
+
+        # 核心信号：偏离度的反向（均值回归）
+        # 价格高于 VWAP → negative score（看空回归）
+        # 但不能太极端 — 超强趋势中价格可以持续偏离
+        mean_reversion = _tanh_scale(-dev_15m / 0.5, sensitivity=1.0)
+
+        # 趋势确认：短周期和长周期偏离方向一致 → 趋势更可信
+        # 这时候不做均值回归，而是顺势
+        if dev_5m * dev_1h > 0 and abs(dev_1h) > 0.3:
+            # 同向偏离且 1h 偏离超过 0.3% → 趋势模式
+            trend_score = _tanh_scale(dev_5m / 0.5, sensitivity=0.8)
+            # 混合：60% 均值回归 + 40% 趋势
+            score = _clamp(mean_reversion * 0.6 + trend_score * 0.4)
+        else:
+            score = mean_reversion
+
+        direction = "高于" if dev_15m > 0 else "低于"
+        return FactorScore(
+            "vwap", round(score, 4), w, dev_15m,
+            f"价格{direction}VWAP {abs(dev_15m):.3f}% (5m:{dev_5m:.3f}% 1h:{dev_1h:.3f}%)"
+        )
+
+    def _score_volume_profile(self, vp: dict) -> FactorScore:
+        """
+        Volume Profile: 价格相对 POC 和价值区域的位置。
+        逻辑：
+          - 价格在 Value Area 内 → 中性（盘整区）
+          - 价格突破 VAH → 看多（突破阻力）
+          - 价格跌破 VAL → 看空（跌破支撑）
+          - 价格接近 POC → 均值回归完成，方向不定
+          - 价格接近 HVN → 支撑/阻力确认
+        """
+        w = self.weights.get("volume_profile", 0.07)
+        poc = vp.get("poc_price", 0)
+        vah = vp.get("vah_price", 0)
+        val = vp.get("val_price", 0)
+        in_va = vp.get("in_value_area", False)
+        poc_dev = vp.get("price_vs_poc_pct", 0)
+        total_vol = vp.get("total_volume_usdt", 0)
+
+        if poc <= 0 or total_vol < 1000:
+            return FactorScore("volume_profile", 0.0, w, 0.0, "VP 数据不足")
+
+        if in_va:
+            # 在价值区域内 → 弱信号，偏向 POC 方向（均值回归）
+            score = _tanh_scale(-poc_dev / 0.3, sensitivity=0.5)
+            location = "价值区内"
+        elif poc_dev > 0:
+            # 价格在 VAH 上方 → 突破阻力，看多
+            score = _tanh_scale(poc_dev / 0.5, sensitivity=1.0)
+            location = "突破VAH上方"
+        else:
+            # 价格在 VAL 下方 → 跌破支撑，看空
+            score = _tanh_scale(poc_dev / 0.5, sensitivity=1.0)
+            location = "跌破VAL下方"
+
+        return FactorScore(
+            "volume_profile", round(score, 4), w, poc_dev,
+            f"{location} POC偏离{poc_dev:.3f}% POC={poc:.1f} VA=[{val:.1f},{vah:.1f}]"
+        )
+
+    def _score_absorption(self, abs_data: dict) -> FactorScore:
+        """
+        Absorption: 吸收检测 — 大资金意图最直接的暴露。
+        逻辑：
+          - 买方吸收（卖单大量成交但价格不跌）→ 大买家在接盘 → 看涨
+          - 卖方吸收（买单大量成交但价格不涨）→ 大卖家在出货 → 看跌
+          - 吸收事件频繁出现 → 方向信号更强
+        """
+        w = self.weights.get("absorption", 0.10)
+        net = abs_data.get("net_absorption_30s", 0)
+        buy_abs = abs_data.get("buy_absorption_30s", 0)
+        sell_abs = abs_data.get("sell_absorption_30s", 0)
+        is_absorbing = abs_data.get("is_absorbing", False)
+        side = abs_data.get("absorption_side", "none")
+        events = abs_data.get("event_count_5m", 0)
+
+        if not is_absorbing and events == 0:
+            return FactorScore("absorption", 0.0, w, 0.0, "无吸收信号")
+
+        # 净吸收方向 → 直接作为分数
+        score = _clamp(net)
+
+        # 频繁吸收事件加成（5 分钟内事件越多，信号越强）
+        if events >= 3:
+            event_boost = min(events * 0.05, 0.3)
+            if score > 0:
+                score = _clamp(score + event_boost)
+            elif score < 0:
+                score = _clamp(score - event_boost)
+
+        if side == "buy":
+            reason = f"买方吸收 强度={buy_abs:.3f} (5m事件×{events})"
+        elif side == "sell":
+            reason = f"卖方吸收 强度={sell_abs:.3f} (5m事件×{events})"
+        else:
+            reason = f"弱吸收 净值={net:.3f} (5m事件×{events})"
+
+        return FactorScore("absorption", round(score, 4), w, net, reason)

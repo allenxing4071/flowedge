@@ -1,6 +1,6 @@
 """
-FeatureEngine — 特征引擎聚合层 v2.0
-持有所有 11 个特征计算器，提供统一的快照输出和 SSE 订阅接口。
+FeatureEngine — 特征引擎聚合层 v2.1
+持有所有 14 个特征计算器，提供统一的快照输出和 SSE 订阅接口。
 
 完整数据流架构（Phase 2 — 全量数据基建）：
 
@@ -17,11 +17,12 @@ FeatureEngine — 特征引擎聚合层 v2.0
   Coinglass    → 全网OI分交易所, 全网清算, ETF资金流向
   外部         → 恐慌贪婪指数, Coinalyze全网聚合
 
-特征计算器（11 个）：
+特征计算器（14 个）：
   1. CVD           2. OFI           3. VPIN
   4. LargeTrade    5. DepthChange   6. FundingRate
   7. Liquidation   8. OI            9. Sentiment
   10. Trend        11. BookImbalance（内嵌）
+  12. VWAP         13. VolumeProfile 14. Absorption
 """
 
 from __future__ import annotations
@@ -51,14 +52,17 @@ from .liquidation import LiquidationTracker
 from .oi_tracker import OITracker
 from .sentiment import SentimentTracker
 from .trend import TrendTracker
+from .vwap import VWAPCalculator
+from .volume_profile import VolumeProfileCalculator
+from .absorption import AbsorptionDetector
 
 logger = logging.getLogger("feature.engine")
 
 
 class FeatureEngine:
     """
-    特征引擎 v2.0：11 个特征计算器 × N 个币种。
-    设计支持 10+ 币种动态扩展。
+    特征引擎 v2.1：14 个特征计算器 × N 个币种。
+    新增做市商逻辑因子：VWAP / Volume Profile / 吸收检测。
     """
 
     def __init__(self):
@@ -75,6 +79,9 @@ class FeatureEngine:
         self._oi: dict = {}
         self._sentiment: dict = {}
         self._trend: dict = {}
+        self._vwap: dict = {}
+        self._volume_profile: dict = {}
+        self._absorption: dict = {}
 
         # 最新 book ticker
         self._book_ticks: dict = {}
@@ -109,9 +116,12 @@ class FeatureEngine:
             self._oi[symbol] = OITracker()
             self._sentiment[symbol] = SentimentTracker()
             self._trend[symbol] = TrendTracker()
+            self._vwap[symbol] = VWAPCalculator()
+            self._volume_profile[symbol] = VolumeProfileCalculator()
+            self._absorption[symbol] = AbsorptionDetector()
 
         logger.info(
-            f"[FeatureEngine] 已初始化 {len(self._symbols)} 个币种 × 11 特征: {self._symbols}"
+            f"[FeatureEngine] 已初始化 {len(self._symbols)} 个币种 × 14 特征: {self._symbols}"
         )
 
     # ══════════════════════════════════════════
@@ -132,6 +142,12 @@ class FeatureEngine:
                 f"[大单] {symbol} {'买' if large_event.is_taker_buy else '卖'} "
                 f"${large_event.qty_usdt:,.0f} @ {trade.price}"
             )
+        # 新增三因子：VWAP / Volume Profile / 吸收检测
+        self._vwap[symbol].on_trade(trade.price, trade.qty_usdt, trade.timestamp_ms)
+        self._volume_profile[symbol].on_trade(trade.price, trade.qty_usdt, trade.timestamp_ms)
+        self._absorption[symbol].on_trade(
+            trade.price, trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms
+        )
 
     async def on_depth_update(self, symbol: str, snapshot: OrderBookSnapshot) -> None:
         self._counts["depth"] += 1
@@ -289,6 +305,12 @@ class FeatureEngine:
             features["sentiment"] = asdict(self._sentiment[sym].snapshot())
             # 11. 趋势上下文
             features["trend"] = asdict(self._trend[sym].snapshot())
+            # 12. VWAP
+            features["vwap"] = asdict(self._vwap[sym].snapshot())
+            # 13. Volume Profile
+            features["volume_profile"] = asdict(self._volume_profile[sym].snapshot())
+            # 14. 吸收检测
+            features["absorption"] = asdict(self._absorption[sym].snapshot())
 
             result[sym] = features
 
@@ -303,7 +325,7 @@ class FeatureEngine:
             "uptime_s": round(uptime, 1),
             "symbols": self._symbols,
             "symbol_count": len(self._symbols),
-            "feature_count": 11,
+            "feature_count": 14,
             "feeds": dict(self._counts),
             "total_messages": total,
             "msg_rate_approx": round(total / max(uptime, 1), 1),

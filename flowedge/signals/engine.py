@@ -1,19 +1,24 @@
 """
-信号引擎 — FlowEdge 核心决策层。
+信号引擎 — FlowEdge 核心决策层（南哥四层门卫框架 v3.0）。
 
 职责：
   1. 调用 SignalScorer 生成综合信号
   2. 调用 AnomalyDetector 检测异常
-  3. 维护信号历史（用于 UI 信号时间线）
-  4. 提供信号变化事件（用于 SSE 推送）
-  5. 输出 KKline 兼容的情报格式（对接层）
+  3. 调用 EntryGate 四层门卫过滤（环境+位置+行为+方向）
+  4. 维护信号历史（用于 UI 信号时间线）
+  5. 提供信号变化事件（用于 SSE 推送）
+  6. 输出 KKline 兼容的情报格式（对接层）
 
 数据流：
   FeatureEngine.get_snapshot()
        ↓
-  SignalEngine.evaluate()
+  SignalScorer.score() → CompositeSignal（原始评分）
        ↓
-  CompositeSignal + AnomalySnapshot → API / SSE / Bridge
+  EntryGate.evaluate() → GateResult（四层门卫过滤）
+       ↓
+  只有门卫全部通过才发出方向信号，否则强制 NEUTRAL
+       ↓
+  PaperTrader（带动态止损止盈）
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from .scorer import SignalScorer, CompositeSignal
 from .detector import AnomalyDetector, AnomalySnapshot, AnomalyEvent
 from .tracker import SignalTracker
 from .pusher import SignalPusher
+from .entry_gate import EntryGate, GateResult
 
 logger = logging.getLogger("flowedge.signals")
 
@@ -74,12 +80,15 @@ class SignalEngine:
         scorer: Optional[SignalScorer] = None,
         detector: Optional[AnomalyDetector] = None,
         tracker: Optional[SignalTracker] = None,
+        gate: Optional[EntryGate] = None,
         history_size: int = 500,
     ):
         self.scorer = scorer or SignalScorer()
         self.detector = detector or AnomalyDetector()
         self.tracker = tracker or SignalTracker()
+        self.gate = gate or EntryGate()
         self.pusher = SignalPusher()
+        self.paper_trader = None  # 由 api.py 在 lifespan 中注入
 
         # 每币种状态
         self._states: dict[str, SignalState] = {}
@@ -93,7 +102,19 @@ class SignalEngine:
         # SSE 信号订阅者
         self._signal_subscribers: list = []
 
+        # 门卫结果缓存（供 API 查询）
+        self._last_gate_results: dict[str, GateResult] = {}
+
+        # 门卫评估日志（质量看板数据源，最近 2000 条）
+        self._gate_log: deque = deque(maxlen=2000)
+
         self._eval_count = 0
+
+        # ── 信号去抖：防止临界点抖动产生虚假信号变化 ──
+        # 新信号必须连续出现 DEBOUNCE_COUNT 次才算有效变化
+        self.DEBOUNCE_COUNT = 5   # 评估间隔1s → 5次 = 5秒稳定期
+        # 每币种的去抖状态：{symbol: {"pending": str, "count": int, "confirmed": str}}
+        self._debounce: dict[str, dict] = {}
 
     # ══════════════════════════════════════════
     # 核心评估
@@ -114,8 +135,8 @@ class SignalEngine:
         results = {}
 
         for symbol, features in snapshot.items():
-            # 多因子评分
-            signal = self.scorer.score(features, timestamp_ms=now_ms)
+            # 多因子评分（传入 symbol 用于滞后区状态追踪）
+            signal = self.scorer.score(features, timestamp_ms=now_ms, symbol=symbol)
 
             # 异常检测
             anomalies = self.detector.detect(features, symbol=symbol)
@@ -124,10 +145,83 @@ class SignalEngine:
             if anomalies.risk_level in ("HIGH", "EXTREME"):
                 signal.confidence = round(signal.confidence * 0.7, 3)
 
-            # 检测信号变化
+            # ── 四层门卫过滤（南哥框架核心）──
+            # 门卫决定是否允许方向信号通过，不通过则强制 NEUTRAL
+            gate_result = self.gate.evaluate(features, signal)
+            self._last_gate_results[symbol] = gate_result
+
+            # 记录门卫评估日志（质量看板数据源）
+            self._gate_log.append({
+                "ts": now_ms / 1000,
+                "symbol": symbol,
+                "passed": gate_result.passed,
+                "signal": gate_result.signal,
+                "side": gate_result.side,
+                "raw_score": signal.score,
+                "raw_signal": signal.signal,
+                "confidence": signal.confidence,
+                "regime_passed": gate_result.regime.passed,
+                "regime_detail": gate_result.regime.detail,
+                "location_passed": gate_result.location.passed,
+                "location_detail": gate_result.location.detail,
+                "behavior_passed": gate_result.behavior.passed,
+                "behavior_detail": gate_result.behavior.detail,
+                "direction_passed": gate_result.direction.passed,
+                "direction_detail": gate_result.direction.detail,
+                "reject_layer": gate_result.reject_layer,
+                "reject_reason": gate_result.reject_reason,
+                "sl_pct": gate_result.suggested_stop_loss_pct,
+                "tp_pct": gate_result.suggested_take_profit_pct,
+            })
+
+            if gate_result.passed:
+                # 门卫通过 → 使用门卫建议的信号
+                gated_signal = gate_result.signal
+            else:
+                # 门卫拒绝 → 强制 NEUTRAL（不管评分器给了什么信号）
+                # 但如果当前有持仓且信号是平仓方向，仍然允许平仓信号通过
+                # （门卫只管入场，不管出场）
+                prev_state = self._states.get(symbol)
+                if prev_state and prev_state.signal.signal != "NEUTRAL":
+                    # 有持仓 — 允许 NEUTRAL 和反转信号通过（用于平仓）
+                    gated_signal = signal.signal
+                else:
+                    gated_signal = "NEUTRAL"
+
+            # 用门卫过滤后的信号替换原始信号
+            raw_signal = gated_signal
+
+            # 检测信号变化（带去抖：新信号必须连续稳定 N 次才算有效）
             prev = self._states.get(symbol)
             prev_signal = prev.signal.signal if prev else None
-            changed = prev_signal != signal.signal
+
+            # 去抖逻辑
+            db = self._debounce.get(symbol, {"pending": None, "count": 0, "confirmed": prev_signal})
+            if raw_signal == db.get("confirmed"):
+                # 与当前确认信号相同 → 重置计数
+                db["pending"] = None
+                db["count"] = 0
+            elif raw_signal == db.get("pending"):
+                # 与待确认信号相同 → 计数+1
+                db["count"] += 1
+            else:
+                # 出现新的候选信号 → 开始计数
+                db["pending"] = raw_signal
+                db["count"] = 1
+
+            # 判断是否达到去抖阈值
+            if db["count"] >= self.DEBOUNCE_COUNT:
+                # 新信号已稳定，确认变化
+                db["confirmed"] = raw_signal
+                db["pending"] = None
+                db["count"] = 0
+                changed = (prev_signal != raw_signal)
+            else:
+                # 未达阈值，信号维持上一次确认值
+                changed = False
+                signal.signal = db.get("confirmed") or raw_signal
+
+            self._debounce[symbol] = db
 
             state = SignalState(
                 symbol=symbol,
@@ -180,6 +274,19 @@ class SignalEngine:
                 self._bg_tasks.add(_push_task)
                 _track_task.add_done_callback(self._bg_tasks.discard)
                 _push_task.add_done_callback(self._bg_tasks.discard)
+
+                # 纸盘交易 — 信号变化时触发虚拟开/平仓
+                # 传入门卫结果，用于动态止损止盈
+                if self.paper_trader:
+                    _gate = self._last_gate_results.get(symbol)
+                    _paper_task = asyncio.ensure_future(
+                        self.paper_trader.on_signal_change(
+                            symbol, signal.signal, signal.score, signal.confidence,
+                            gate_result=_gate,
+                        )
+                    )
+                    self._bg_tasks.add(_paper_task)
+                    _paper_task.add_done_callback(self._bg_tasks.discard)
 
         self._eval_count += 1
         return results
@@ -240,6 +347,234 @@ class SignalEngine:
                 "strong_sell": all_signals.count("STRONG_SELL"),
                 "eval_count": self._eval_count,
             },
+        }
+
+    def get_gate_status(self) -> dict:
+        """获取门卫状态（供 API / UI 使用）"""
+        result = {}
+        for sym, gr in self._last_gate_results.items():
+            result[sym] = {
+                "passed": gr.passed,
+                "signal": gr.signal,
+                "side": gr.side,
+                "regime": {
+                    "passed": gr.regime.passed,
+                    "detail": gr.regime.detail,
+                    "data": gr.regime.data,
+                },
+                "location": {
+                    "passed": gr.location.passed,
+                    "detail": gr.location.detail,
+                    "data": gr.location.data,
+                },
+                "behavior": {
+                    "passed": gr.behavior.passed,
+                    "detail": gr.behavior.detail,
+                    "data": gr.behavior.data,
+                },
+                "direction": {
+                    "passed": gr.direction.passed,
+                    "detail": gr.direction.detail,
+                    "data": gr.direction.data,
+                },
+                "reject_layer": gr.reject_layer,
+                "reject_reason": gr.reject_reason,
+                "suggested_stop_loss_pct": gr.suggested_stop_loss_pct,
+                "suggested_take_profit_pct": gr.suggested_take_profit_pct,
+            }
+        return result
+
+    def get_quality_board(self) -> dict:
+        """
+        质量看板数据（学习 KKline 质量看板设计）。
+
+        包含：
+          1. 四层门卫漏斗（每层通过/拒绝率）
+          2. 方向分布（LONG/SHORT/NEUTRAL 占比 + 偏见告警）
+          3. 市场环境分布（trending/ranging/breakout/extreme）
+          4. 拒绝原因 Top N
+          5. 动态 vs 固定止损对比（来自纸盘交易数据）
+          6. 门卫通过 vs 全部的交易表现对比
+          7. 样本量与置信度说明
+        """
+        log = list(self._gate_log)
+        total = len(log)
+
+        if total == 0:
+            return {
+                "status": "no_data",
+                "message": "门卫评估日志为空，等待数据积累...",
+                "sample_size": 0,
+            }
+
+        # ── 1. 四层门卫漏斗 ──
+        # 注意：每一层是独立评估的，不是累加关系
+        # 某些信号可能在第一层就被拒绝，后面的层不会评估
+        regime_passed = sum(1 for e in log if e["regime_passed"])
+        location_passed = sum(1 for e in log if e["location_passed"])
+        behavior_passed = sum(1 for e in log if e["behavior_passed"])
+        direction_passed = sum(1 for e in log if e["direction_passed"])
+        final_passed = sum(1 for e in log if e["passed"])
+
+        # 漏斗转化率（逐层：只有上一层通过的才进入下一层）
+        # 但 EntryGate 是串行的，第一层不过后面不评估
+        # 这里用 reject_layer 来精确计算
+        rejected_at = {"regime": 0, "location": 0, "behavior": 0, "direction": 0}
+        for e in log:
+            if not e["passed"] and e["reject_layer"]:
+                layer = e["reject_layer"].lower().replace("marketregime", "regime").replace(
+                    "locationfilter", "location"
+                ).replace("behaviorconfirm", "behavior").replace(
+                    "directionconfirm", "direction"
+                )
+                if layer in rejected_at:
+                    rejected_at[layer] += 1
+
+        funnel = {
+            "total_evaluations": total,
+            "regime_passed": regime_passed,
+            "location_passed": location_passed,
+            "behavior_passed": behavior_passed,
+            "direction_passed": direction_passed,
+            "final_passed": final_passed,
+            "final_pass_rate": round(final_passed / total * 100, 1) if total else 0,
+            "rejected_at": rejected_at,
+        }
+
+        # ── 2. 方向分布 ──
+        dir_counts = {"LONG": 0, "SHORT": 0, "NEUTRAL": 0}
+        for e in log:
+            if e["passed"]:
+                side = e["side"] or "NEUTRAL"
+                if side in dir_counts:
+                    dir_counts[side] += 1
+                else:
+                    dir_counts["NEUTRAL"] += 1
+            else:
+                dir_counts["NEUTRAL"] += 1
+
+        bias_warning = None
+        if total >= 20:
+            for d, c in dir_counts.items():
+                if d != "NEUTRAL" and c / total > 0.7:
+                    bias_warning = f"告警: {d} 占比 {c/total:.0%}，可能存在方向偏见"
+            neutral_pct = dir_counts["NEUTRAL"] / total
+            if neutral_pct > 0.95:
+                bias_warning = f"告警: NEUTRAL 占比 {neutral_pct:.0%}，门卫可能过严"
+
+        direction_dist = {
+            "LONG": dir_counts["LONG"],
+            "SHORT": dir_counts["SHORT"],
+            "NEUTRAL": dir_counts["NEUTRAL"],
+            "total": total,
+            "long_pct": round(dir_counts["LONG"] / total * 100, 1) if total else 0,
+            "short_pct": round(dir_counts["SHORT"] / total * 100, 1) if total else 0,
+            "neutral_pct": round(dir_counts["NEUTRAL"] / total * 100, 1) if total else 0,
+            "bias_warning": bias_warning,
+        }
+
+        # ── 3. 市场环境分布 ──
+        regime_counts = {}
+        for e in log:
+            detail = e.get("regime_detail", "unknown")
+            # 从 detail 提取环境类型（如 "trending_up → trending"）
+            regime_type = detail.split("_")[0] if detail else "unknown"
+            regime_counts[regime_type] = regime_counts.get(regime_type, 0) + 1
+
+        # ── 4. 拒绝原因 Top N ──
+        reject_reasons = {}
+        for e in log:
+            if not e["passed"] and e["reject_reason"]:
+                reason = e["reject_reason"]
+                reject_reasons[reason] = reject_reasons.get(reason, 0) + 1
+        top_rejects = sorted(reject_reasons.items(), key=lambda x: -x[1])[:10]
+
+        # ── 5. 门卫建议的止损/止盈分布（仅通过的信号）──
+        passed_entries = [e for e in log if e["passed"]]
+        sl_values = [e["sl_pct"] for e in passed_entries if e["sl_pct"]]
+        tp_values = [e["tp_pct"] for e in passed_entries if e["tp_pct"]]
+        dynamic_sl_tp = {
+            "count": len(passed_entries),
+            "avg_sl_pct": round(sum(sl_values) / len(sl_values), 2) if sl_values else 0,
+            "avg_tp_pct": round(sum(tp_values) / len(tp_values), 2) if tp_values else 0,
+            "min_sl_pct": round(min(sl_values), 2) if sl_values else 0,
+            "max_sl_pct": round(max(sl_values), 2) if sl_values else 0,
+            "min_tp_pct": round(min(tp_values), 2) if tp_values else 0,
+            "max_tp_pct": round(max(tp_values), 2) if tp_values else 0,
+        }
+
+        # ── 6. 纸盘交易表现（从 paper_trader 获取）──
+        trade_performance = {"status": "no_paper_trader"}
+        if self.paper_trader:
+            try:
+                trades = self.paper_trader.get_trades(limit=500)
+                if trades:
+                    dynamic_trades = [t for t in trades if t.get("sl_source") == "门卫动态"]
+                    fixed_trades = [t for t in trades if t.get("sl_source") != "门卫动态"]
+
+                    def _trade_stats(trade_list):
+                        if not trade_list:
+                            return {"count": 0}
+                        wins = [t for t in trade_list if t.get("net_pnl", 0) > 0]
+                        return {
+                            "count": len(trade_list),
+                            "win_rate": round(len(wins) / len(trade_list) * 100, 1),
+                            "avg_pnl_pct": round(
+                                sum(t.get("net_pnl_pct", 0) for t in trade_list) / len(trade_list), 2
+                            ),
+                            "total_pnl": round(
+                                sum(t.get("net_pnl", 0) for t in trade_list), 2
+                            ),
+                        }
+
+                    trade_performance = {
+                        "all_trades": _trade_stats(trades),
+                        "dynamic_sl_trades": _trade_stats(dynamic_trades),
+                        "fixed_sl_trades": _trade_stats(fixed_trades),
+                        "exit_reasons": {},
+                    }
+                    # 退出原因分布
+                    for t in trades:
+                        reason = t.get("exit_reason", "unknown")
+                        trade_performance["exit_reasons"][reason] = (
+                            trade_performance["exit_reasons"].get(reason, 0) + 1
+                        )
+                else:
+                    trade_performance = {"status": "no_trades", "message": "暂无纸盘交易记录"}
+            except Exception as e:
+                trade_performance = {"status": "error", "message": str(e)}
+
+        # ── 7. 样本量与置信度 ──
+        if total < 20:
+            confidence_note = "样本不足（<20），数据仅供参考，继续观察"
+        elif total < 100:
+            confidence_note = "样本量中等（20-100），可做初步判断"
+        elif total < 500:
+            confidence_note = "样本量充足（100-500），数据可靠"
+        else:
+            confidence_note = f"样本量大（{total}），数据高度可靠"
+
+        # ── 8. 时间范围 ──
+        first_ts = log[0]["ts"] if log else 0
+        last_ts = log[-1]["ts"] if log else 0
+        duration_hours = round((last_ts - first_ts) / 3600, 1) if first_ts and last_ts else 0
+
+        return {
+            "status": "ok",
+            "gate_funnel": funnel,
+            "direction_distribution": direction_dist,
+            "regime_distribution": regime_counts,
+            "top_reject_reasons": [{"reason": r, "count": c} for r, c in top_rejects],
+            "dynamic_sl_tp": dynamic_sl_tp,
+            "trade_performance": trade_performance,
+            "sample_size": total,
+            "confidence_note": confidence_note,
+            "time_range": {
+                "first_ts": first_ts,
+                "last_ts": last_ts,
+                "duration_hours": duration_hours,
+            },
+            "generated_at": time.time(),
         }
 
     # ══════════════════════════════════════════
@@ -404,6 +739,14 @@ class SignalEngine:
                 if snapshot:
                     results = self.evaluate(snapshot)
                     await self._push_signal_events(results)
+
+                    # 转发实时价格给纸盘交易器（用于止损/盈亏追踪）
+                    if self.paper_trader:
+                        for sym, feat in snapshot.items():
+                            book = feat.get("book", {})
+                            mid = book.get("mid_price", 0)
+                            if mid > 0:
+                                self.paper_trader.on_price_update(sym, mid)
             except Exception as e:
                 logger.error(f"[SignalEngine] 评估异常: {e}", exc_info=True)
 

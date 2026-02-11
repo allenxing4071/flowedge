@@ -194,11 +194,11 @@ export default function PerformancePanel() {
     );
   }
 
-  if (error || !data) {
+  if (error || !data || !('total_signals' in data) || !data.windows) {
     return (
       <div className="card p-6">
         <div className="text-sm text-text-tertiary text-center">
-          胜率追踪暂不可用
+          胜率追踪暂不可用 — 等待信号数据积累
         </div>
       </div>
     );

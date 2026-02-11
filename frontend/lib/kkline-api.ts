@@ -97,7 +97,15 @@ export async function fetchBalance(): Promise<BalanceInfo | null> {
       headers: headers(),
     });
     if (!res.ok) return null;
-    return res.json();
+    const raw = await res.json();
+    // KKline API 返回 {total, available, ...}，需要映射到前端字段名
+    return {
+      total_balance: raw.total_balance ?? raw.total ?? raw.margin_balance ?? 0,
+      available_balance: raw.available_balance ?? raw.available ?? 0,
+      unrealized_pnl: raw.unrealized_pnl ?? 0,
+      margin_used: raw.margin_used ?? 0,
+      margin_ratio: raw.margin_ratio ?? 0,
+    };
   } catch {
     return null;
   }

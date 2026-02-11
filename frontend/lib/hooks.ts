@@ -5,7 +5,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchDashboard, fetchSignal, fetchFeatures, fetchSignalHistory, fetchPerformance } from './api';
+import { fetchDashboard, fetchSignal, fetchFeatures, fetchSignalHistory, fetchPerformance, fetchGateStatus } from './api';
 
 // ── 通用轮询 Hook ──
 
@@ -193,6 +193,34 @@ export function formatTimestamp(ms: number): string {
     second: '2-digit',
     timeZone: 'Asia/Shanghai',
   });
+}
+
+// ── 门卫状态 ──
+
+export interface GateLayerResult {
+  passed: boolean;
+  detail: string;
+  data: Record<string, unknown>;
+}
+
+export interface GateStatusItem {
+  passed: boolean;
+  signal: string;
+  side: string;
+  regime: GateLayerResult;
+  location: GateLayerResult;
+  behavior: GateLayerResult;
+  direction: GateLayerResult;
+  reject_layer: string | null;
+  reject_reason: string | null;
+  suggested_stop_loss_pct: number;
+  suggested_take_profit_pct: number;
+}
+
+export type GateStatusMap = Record<string, GateStatusItem>;
+
+export function useGateStatus(intervalMs = 2000) {
+  return usePolling<GateStatusMap>(fetchGateStatus, intervalMs);
 }
 
 // ── 信号胜率追踪 ──

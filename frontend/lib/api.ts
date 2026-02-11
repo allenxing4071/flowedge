@@ -105,4 +105,62 @@ export function subscribeSignals(
   return () => es.close();
 }
 
+// ── 纸盘交易 API ──
+
+export async function fetchPaperStatus() {
+  const res = await fetch(`${API_BASE}/paper/status`);
+  if (!res.ok) throw new Error(`Paper status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPaperTrades(limit = 50) {
+  const res = await fetch(`${API_BASE}/paper/trades?limit=${limit}`);
+  if (!res.ok) throw new Error(`Paper trades failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPaperEquity(limit = 1440) {
+  const res = await fetch(`${API_BASE}/paper/equity?limit=${limit}`);
+  if (!res.ok) throw new Error(`Paper equity failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updatePaperConfig(updates: Record<string, unknown>) {
+  const res = await fetch(`${API_BASE}/paper/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Paper config update failed: ${res.status}`);
+  return res.json();
+}
+
+export async function resetPaperAccount() {
+  const res = await fetch(`${API_BASE}/paper/reset`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(`Paper reset failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPaperSignalLog(limit = 50) {
+  const res = await fetch(`${API_BASE}/paper/signal-log?limit=${limit}`);
+  if (!res.ok) throw new Error(`Paper signal-log failed: ${res.status}`);
+  return res.json();
+}
+
+// ── 门卫与质量看板 API ──
+
+export async function fetchGateStatus() {
+  const res = await fetch(`${API_BASE}/gate/status`);
+  if (!res.ok) throw new Error(`Gate status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchQualityBoard() {
+  const res = await fetch(`${API_BASE}/quality-board`);
+  if (!res.ok) throw new Error(`Quality board failed: ${res.status}`);
+  return res.json();
+}
+
 export { API_BASE };

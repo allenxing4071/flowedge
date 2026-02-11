@@ -17,5 +17,8 @@ uvicorn[standard]>=0.27.0
 # HTTP 客户端（REST API 备用）
 httpx>=0.27.0
 
+# 异步 HTTP 客户端（信号追踪器 + 推送器）
+aiohttp>=3.9.0
+
 # 环境变量
 python-dotenv>=1.0.0

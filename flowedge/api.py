@@ -37,6 +37,7 @@ from .feeds.market_data import MarketDataCollector
 from .feeds.external import ExternalDataCollector
 from .core.rate_limiter import rate_limiters
 from .signals.engine import SignalEngine
+from .paper_trader import PaperTrader
 from .config import cfg
 
 logger = logging.getLogger("flowedge.api")
@@ -44,6 +45,7 @@ logger = logging.getLogger("flowedge.api")
 # ── 全局实例 ──
 engine = FeatureEngine()
 signal_engine = SignalEngine()
+paper_trader = PaperTrader()
 binance_rest = BinanceRestCollector()
 market_data = MarketDataCollector()
 external_data = ExternalDataCollector()
@@ -122,6 +124,10 @@ async def lifespan(app: FastAPI):
     _tasks.append(asyncio.create_task(
         signal_engine.tracker.tracking_loop(interval_s=30)
     ))
+
+    # ── 纸盘交易：注入引擎 + 启动资金曲线录制 ──
+    signal_engine.paper_trader = paper_trader
+    _tasks.append(asyncio.create_task(paper_trader.equity_loop(interval_s=60)))
 
     # 数据源状态摘要
     sources = []
@@ -322,6 +328,21 @@ async def signals_stream():
     )
 
 
+@app.get("/gate/status", response_class=OrjsonResponse)
+async def gate_status():
+    """获取所有币种的门卫状态（四层门卫过滤结果）"""
+    return signal_engine.get_gate_status()
+
+
+@app.get("/quality-board", response_class=OrjsonResponse)
+async def quality_board():
+    """
+    质量看板 — 门卫框架的健康诊断面板。
+    包含：漏斗转化、方向分布、拒绝原因、止损对比、交易表现。
+    """
+    return signal_engine.get_quality_board()
+
+
 @app.get("/dashboard", response_class=OrjsonResponse)
 async def dashboard():
     """
@@ -352,3 +373,49 @@ async def bridge_kkline(symbol: str):
             status_code=404,
         )
     return signal_engine.get_kkline_intel(symbol, features)
+
+
+# ══════════════════════════════════════════
+# 纸盘交易端点（PaperTrader）
+# ══════════════════════════════════════════
+
+@app.get("/paper/status", response_class=OrjsonResponse)
+async def paper_status():
+    """纸盘交易完整状态 — 账户、持仓、统计"""
+    return paper_trader.get_status()
+
+
+@app.get("/paper/trades", response_class=OrjsonResponse)
+async def paper_trades(
+    limit: int = Query(50, ge=1, le=500, description="返回条数"),
+):
+    """纸盘交易历史记录"""
+    return paper_trader.get_trades(limit=limit)
+
+
+@app.get("/paper/equity", response_class=OrjsonResponse)
+async def paper_equity(
+    limit: int = Query(1440, ge=1, le=10000, description="数据点数"),
+):
+    """纸盘资金曲线"""
+    return paper_trader.get_equity_curve(limit=limit)
+
+
+@app.post("/paper/config", response_class=OrjsonResponse)
+async def paper_config(updates: dict):
+    """更新纸盘交易配置"""
+    return paper_trader.update_config(updates)
+
+
+@app.get("/paper/signal-log", response_class=OrjsonResponse)
+async def paper_signal_log(
+    limit: int = Query(50, ge=1, le=200, description="返回条数"),
+):
+    """纸盘信号决策日志 — 记录每次信号变化的决策过程"""
+    return paper_trader.get_signal_log(limit=limit)
+
+
+@app.post("/paper/reset", response_class=OrjsonResponse)
+async def paper_reset():
+    """重置纸盘账户（清空所有数据，恢复初始资金）"""
+    return paper_trader.reset()

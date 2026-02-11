@@ -25,10 +25,11 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data (runtime)
+# Data (runtime + backups)
 data/*.db
 data/*.json
 data/*.log
+data/backups/
 
 # Node / Frontend
 node_modules/

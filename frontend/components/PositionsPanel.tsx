@@ -16,13 +16,24 @@ import {
   BalanceInfo,
 } from '@/lib/kkline-api';
 
-function PnlDisplay({ value, pct }: { value: number; pct?: number }) {
+/** null-safe 数值格式化 */
+function safeNum(v: number | null | undefined, digits = 2): string {
+  if (v == null || isNaN(v)) return '--';
+  return v.toFixed(digits);
+}
+function safeLoc(v: number | null | undefined, opts?: Intl.NumberFormatOptions): string {
+  if (v == null || isNaN(v)) return '--';
+  return v.toLocaleString(undefined, opts);
+}
+
+function PnlDisplay({ value, pct }: { value: number | null | undefined; pct?: number | null }) {
+  if (value == null || isNaN(value)) return <span className="mono-num text-text-tertiary">--</span>;
   const color = value >= 0 ? 'text-bull' : 'text-bear';
   const sign = value >= 0 ? '+' : '';
   return (
     <span className={`mono-num font-bold ${color}`}>
       {sign}${value.toFixed(2)}
-      {pct !== undefined && (
+      {pct != null && !isNaN(pct) && (
         <span className="text-xs ml-1">({sign}{pct.toFixed(2)}%)</span>
       )}
     </span>
@@ -51,13 +62,13 @@ function PositionRow({ pos, onClose }: { pos: Position; onClose: (symbol: string
       <div className="flex-1 text-sm">
         <div className="text-text-tertiary text-xs">入场</div>
         <div className="mono-num text-text-secondary">
-          ${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          ${safeLoc(pos.entry_price, { minimumFractionDigits: 2 })}
         </div>
       </div>
       <div className="flex-1 text-sm">
         <div className="text-text-tertiary text-xs">标记</div>
         <div className="mono-num text-text-primary">
-          ${pos.mark_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          ${safeLoc(pos.mark_price, { minimumFractionDigits: 2 })}
         </div>
       </div>
 
@@ -65,7 +76,7 @@ function PositionRow({ pos, onClose }: { pos: Position; onClose: (symbol: string
       <div className="flex-1 text-sm">
         <div className="text-text-tertiary text-xs">头寸</div>
         <div className="mono-num text-text-secondary">
-          ${pos.notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          ${safeLoc(pos.notional, { maximumFractionDigits: 0 })}
         </div>
       </div>
 
@@ -140,13 +151,13 @@ export default function PositionsPanel() {
         <div className="card p-4 text-center">
           <div className="text-xs text-text-tertiary mb-1">总余额</div>
           <div className="text-xl font-bold mono-num text-text-primary">
-            {balance ? `$${balance.total_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '--'}
+            {balance ? `$${safeLoc(balance.total_balance, { minimumFractionDigits: 2 })}` : '--'}
           </div>
         </div>
         <div className="card p-4 text-center">
           <div className="text-xs text-text-tertiary mb-1">可用余额</div>
           <div className="text-xl font-bold mono-num text-text-primary">
-            {balance ? `$${balance.available_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '--'}
+            {balance ? `$${safeLoc(balance.available_balance, { minimumFractionDigits: 2 })}` : '--'}
           </div>
         </div>
         <div className="card p-4 text-center">

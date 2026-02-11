@@ -323,6 +323,10 @@ cloud_sync() {
         --exclude '.cursor' \
         --exclude '.skills' \
         --exclude 'tests/' \
+        --exclude 'node_modules' \
+        --exclude '.next' \
+        --exclude 'frontend/node_modules' \
+        --exclude 'frontend/.next' \
         "$PROJECT_ROOT/" \
         "$CLOUD_SERVER_USER@$CLOUD_SERVER_IP:$CLOUD_PROJECT_PATH/"
 
@@ -391,6 +395,55 @@ cloud_restart() {
 }
 
 # ============================================================================
+# 数据备份：部署前自动拉取服务器数据库快照到本地
+# ============================================================================
+BACKUP_DIR="$PROJECT_ROOT/data/backups"
+
+cloud_backup_data() {
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    local dest="$BACKUP_DIR/$ts"
+
+    log "💾 备份服务器数据 → data/backups/$ts ..."
+
+    # 检查服务器上是否有数据文件
+    local has_data
+    has_data=$(cloud_ssh "ls $CLOUD_PROJECT_PATH/data/*.db 2>/dev/null | wc -l" 2>/dev/null || echo "0")
+    if [ "$has_data" = "0" ] || [ -z "$has_data" ]; then
+        warn "服务器无数据文件，跳过备份"
+        return 0
+    fi
+
+    mkdir -p "$dest"
+
+    # 拉取所有 .db 文件
+    scp -i "$CLOUD_SSH_KEY" -P "$CLOUD_SSH_PORT" -o StrictHostKeyChecking=no \
+        "$CLOUD_SERVER_USER@$CLOUD_SERVER_IP:$CLOUD_PROJECT_PATH/data/*.db" \
+        "$dest/" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        local count
+        count=$(ls "$dest"/*.db 2>/dev/null | wc -l)
+        local size
+        size=$(du -sh "$dest" 2>/dev/null | cut -f1)
+        ok "数据备份完成: $count 个文件, $size → data/backups/$ts"
+    else
+        warn "数据备份失败（非致命，继续部署）"
+        rm -rf "$dest" 2>/dev/null
+    fi
+
+    # 自动清理 30 天前的备份
+    if [ -d "$BACKUP_DIR" ]; then
+        local old_count
+        old_count=$(find "$BACKUP_DIR" -maxdepth 1 -type d -mtime +30 2>/dev/null | wc -l)
+        if [ "$old_count" -gt 0 ]; then
+            find "$BACKUP_DIR" -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + 2>/dev/null
+            log "🧹 已清理 $old_count 个 30 天前的旧备份"
+        fi
+    fi
+}
+
+# ============================================================================
 # 云服务器: 一键部署（rsync + 重建）
 # ============================================================================
 cloud_deploy() {
@@ -399,6 +452,10 @@ cloud_deploy() {
     echo -e "${CYAN}║    FlowEdge 一键部署 (rsync + Docker 重建)   ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
     echo ""
+
+    # 部署前自动备份数据
+    cloud_ssh_connect
+    cloud_backup_data
 
     cloud_sync
     cloud_rebuild
@@ -541,6 +598,7 @@ show_help() {
     echo -e "    ${GREEN}cs${NC}     查看云服务器状态"
     echo -e "    ${GREEN}cl${NC}     查看云服务器日志"
     echo -e "    ${GREEN}sync${NC}   仅同步代码 (不重建)"
+    echo -e "    ${GREEN}backup${NC} 备份服务器数据到本地"
     echo -e "    ${GREEN}i${NC}      首次初始化"
     echo ""
     echo -e "  ${BOLD}本地命令:${NC}"
@@ -559,6 +617,7 @@ case "${1:-}" in
     cs)     cloud_status ;;
     cl)     cloud_logs ;;
     sync)   cloud_sync ;;
+    backup) cloud_ssh_connect && cloud_backup_data ;;
     i)      cloud_init ;;
 
     # 本地命令

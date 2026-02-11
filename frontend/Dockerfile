@@ -11,6 +11,11 @@ RUN npm ci
 # 构建
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Next.js NEXT_PUBLIC_* 变量在构建时烧入，必须通过 ARG 传入
+ARG NEXT_PUBLIC_API_URL=https://flowedge.kline007.top
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 RUN npm run build
 
 # 生产镜像 — 只包含 standalone 输出

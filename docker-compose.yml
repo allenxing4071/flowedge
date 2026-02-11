@@ -21,12 +21,15 @@ services:
       retries: 3
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://flowedge.kline007.top}
     container_name: flowedge-cockpit
     ports:
       - "3005:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8005
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://flowedge.kline007.top}
     depends_on:
       backend:
         condition: service_healthy

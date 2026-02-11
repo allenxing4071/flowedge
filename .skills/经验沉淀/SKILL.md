@@ -14,6 +14,7 @@
 | 特征计算逻辑/算法改进 | `.skills/特征工程/SKILL.md` |
 | 部署/环境/Docker 问题 | `.skills/部署运维/SKILL.md` |
 | 项目结构/架构变更 | `.skills/项目入门/SKILL.md` |
+| 竞品分析 / 做市商逻辑 / 行业方法论 | `.skills/竞品分析/SKILL.md` |
 | 无明确归属 | **本文件** |
 
 ## 经验条目模板

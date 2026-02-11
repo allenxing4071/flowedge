@@ -1,12 +1,17 @@
 /**
- * 信号卡片 — 单币种信号概览
- * 参考 KKline 仪表盘：大数字突出、层级分明、宽裕间距
+ * 信号卡片 — 单币种信号概览 + 门卫状态
+ *
+ * v3.1 更新：内嵌四层门卫状态徽章，一眼看懂系统决策
+ * - 顶部：币种 + 信号徽章
+ * - 中部：大数字得分 + 门卫状态条
+ * - 底部：关键指标 + 交易按钮
  */
 
 'use client';
 
 import {
   SymbolSignal,
+  GateStatusItem,
   signalColor,
   signalLabel,
   riskColor,
@@ -17,11 +22,98 @@ import {
 interface Props {
   symbol: string;
   data: SymbolSignal;
+  gate?: GateStatusItem | null;
   onClick?: (symbol: string) => void;
   onTrade?: (symbol: string, side: 'LONG' | 'SHORT') => void;
 }
 
-export default function SignalCard({ symbol, data, onClick, onTrade }: Props) {
+// 门卫层名称中文映射
+const LAYER_LABELS: Record<string, string> = {
+  MarketRegime: '环境',
+  LocationFilter: '位置',
+  BehaviorConfirm: '行为',
+  DirectionConfirm: '方向',
+};
+
+// 从 regime detail 提取环境类型中文
+function regimeLabel(detail: string): string {
+  if (!detail) return '--';
+  if (detail.includes('trending')) return '趋势';
+  if (detail.includes('ranging')) return '震荡';
+  if (detail.includes('breakout')) return '突破';
+  if (detail.includes('extreme')) return '极端';
+  return detail.split('_')[0] || '--';
+}
+
+function GateBadge({ gate }: { gate: GateStatusItem }) {
+  const layers = [
+    { key: 'regime', label: 'L1', result: gate.regime },
+    { key: 'location', label: 'L2', result: gate.location },
+    { key: 'behavior', label: 'L3', result: gate.behavior },
+    { key: 'direction', label: 'L4', result: gate.direction },
+  ];
+
+  return (
+    <div className="mt-3 space-y-2">
+      {/* 门卫总状态 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xxs font-bold ${
+            gate.passed
+              ? 'bg-bull/15 text-bull'
+              : 'bg-surface-2 text-text-tertiary'
+          }`}>
+            <span className="text-xs">{gate.passed ? '▶' : '■'}</span>
+            {gate.passed ? `门卫通过 → ${gate.side}` : '门卫拒绝'}
+          </span>
+          {/* 环境标签 */}
+          <span className="text-xxs text-text-tertiary px-1.5 py-0.5 bg-surface-2 rounded">
+            {regimeLabel(gate.regime.detail)}
+          </span>
+        </div>
+        {/* 动态止损/止盈 */}
+        {gate.passed && (
+          <div className="flex items-center gap-1.5 text-xxs">
+            <span className="text-bear tabular-nums">SL {gate.suggested_stop_loss_pct}%</span>
+            <span className="text-text-tertiary">/</span>
+            <span className="text-bull tabular-nums">TP {gate.suggested_take_profit_pct}%</span>
+          </div>
+        )}
+      </div>
+
+      {/* 四层进度条 */}
+      <div className="flex items-center gap-1">
+        {layers.map((l) => (
+          <div key={l.key} className="flex-1 group/layer relative">
+            <div
+              className={`h-1.5 rounded-full transition-all ${
+                l.result.passed ? 'bg-bull/60' : 'bg-surface-3'
+              }`}
+            />
+            <div className="flex items-center justify-center mt-0.5">
+              <span className={`text-[9px] tabular-nums ${
+                l.result.passed ? 'text-bull/70' : 'text-text-tertiary/50'
+              }`}>
+                {l.label}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 拒绝原因（仅拒绝时显示） */}
+      {!gate.passed && gate.reject_reason && (
+        <div className="text-xxs text-text-tertiary truncate leading-relaxed">
+          <span className="text-bear/70">{LAYER_LABELS[gate.reject_layer || ''] || gate.reject_layer}</span>
+          <span className="mx-1">·</span>
+          {gate.reject_reason}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function SignalCard({ symbol, data, gate, onClick, onTrade }: Props) {
   const isPositive = data.score > 0;
   const scoreAbs = Math.abs(data.score);
 
@@ -49,7 +141,7 @@ export default function SignalCard({ symbol, data, onClick, onTrade }: Props) {
       </div>
 
       {/* 行 2：得分 — 大数字核心视觉 */}
-      <div className="mb-5">
+      <div className="mb-3">
         <div className={`text-3xl font-bold mono-num mb-2 ${signalColor(data.signal)}`}>
           {formatScore(data.score)}
         </div>
@@ -69,8 +161,11 @@ export default function SignalCard({ symbol, data, onClick, onTrade }: Props) {
         </div>
       </div>
 
+      {/* 行 2.5：门卫状态（核心新增） */}
+      {gate && <GateBadge gate={gate} />}
+
       {/* 行 3：关键指标网格 */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-4 mt-4">
         {/* 置信度 */}
         <div>
           <div className="text-xs text-text-tertiary mb-1">置信度</div>
