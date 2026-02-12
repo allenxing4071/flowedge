@@ -158,6 +158,12 @@ function safeDollar(v: number | null | undefined, digits = 2): string {
   return `$${v >= 0 ? '+' : ''}${v.toFixed(digits)}`;
 }
 
+function sideText(side: string): string {
+  if (side === 'LONG' || side === 'BUY') return '多头';
+  if (side === 'SHORT' || side === 'SELL') return '空头';
+  return side || '--';
+}
+
 const EXIT_LABELS: Record<string, { text: string; color: string }> = {
   signal_reverse: { text: '信号反转', color: 'text-info' },
   signal_neutral: { text: '回到中性', color: 'text-text-secondary' },
@@ -253,28 +259,28 @@ function ActivePosition({ pos, config }: { pos: PaperPosition; config: Record<st
   return (
     <div className={`border rounded-lg ${bgColor}`}>
       {/* 顶部行：币种 + 方向 + 盈亏 */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2">
-        <div className="flex items-center gap-2">
-          <span className={`px-2 py-0.5 rounded text-xxs font-bold tracking-wider ${
+      <div className="flex items-center justify-between px-3 sm:px-4 pt-2.5 sm:pt-3 pb-1.5 sm:pb-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <span className={`px-1.5 sm:px-2 py-0.5 rounded text-xxs font-bold tracking-wider ${
             isLong ? 'bg-bull/20 text-bull' : 'bg-bear/20 text-bear'
           }`}>
-            {isLong ? 'LONG' : 'SHORT'}
+            {isLong ? '多头' : '空头'}
           </span>
-          <span className="text-sm font-semibold text-text-primary">{pos.symbol}</span>
-          <span className="text-xxs text-text-tertiary">杠杆 {pos.leverage}x</span>
+          <span className="text-xs sm:text-sm font-semibold text-text-primary">{pos.symbol}</span>
+          <span className="text-xxs text-text-tertiary">{pos.leverage}x</span>
         </div>
         <div className="text-right">
-          <div className={`text-lg font-bold tabular-nums ${pnlColor}`}>
+          <div className={`text-base sm:text-lg font-bold tabular-nums ${pnlColor}`}>
             {safePct(pnlPct)}
           </div>
-          <div className={`text-xs tabular-nums ${pnlColor}`}>
+          <div className={`text-xxs sm:text-xs tabular-nums ${pnlColor}`}>
             {safe(pnl)} USDT
           </div>
         </div>
       </div>
 
       {/* 详情网格：2行4列 */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 px-4 pb-2 text-xs">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 sm:gap-x-4 gap-y-1.5 sm:gap-y-2 px-3 sm:px-4 pb-2 text-xxs sm:text-xs">
         <div>
           <div className="text-text-tertiary text-xxs">持仓数量</div>
           <div className="text-text-secondary tabular-nums">{safe(pos.quantity, 4)}</div>
@@ -310,7 +316,7 @@ function ActivePosition({ pos, config }: { pos: PaperPosition; config: Record<st
       </div>
 
       {/* 底部：入场信号 + confidence */}
-      <div className="flex items-center justify-between px-4 py-2 border-t border-surface-3/30 text-xxs text-text-tertiary">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-1.5 sm:py-2 border-t border-surface-3/30 text-xxs text-text-tertiary">
         <span>信号: <span className={sig.color}>{sig.text}</span></span>
         <span>置信度 <span className="text-text-secondary">{safe((pos.confidence ?? 0) * 100, 0)}%</span></span>
       </div>
@@ -476,45 +482,44 @@ function TradeCard({ trade }: { trade: PaperTrade }) {
     ? 'text-bull' : 'text-bear';
 
   return (
-    <div className={`border-l-2 ${borderColor} bg-surface-1 rounded-r-lg px-4 py-3 animate-fade-in`}>
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center gap-2">
-          <span className="text-xxs text-text-tertiary tabular-nums min-w-[36px]">
+    <div className={`border-l-2 ${borderColor} bg-surface-1 rounded-r-lg px-3 sm:px-4 py-2.5 sm:py-3 animate-fade-in`}>
+      <div className="flex items-center justify-between mb-1 sm:mb-1.5 flex-wrap gap-1">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <span className="text-xxs text-text-tertiary tabular-nums">
             {fmtTime(trade.exit_time)}
           </span>
-          <span className="text-sm font-semibold text-text-primary">{trade.symbol}</span>
-          <span className={`px-1.5 py-0.5 rounded text-xxs font-bold ${
+          <span className="text-xs sm:text-sm font-semibold text-text-primary">{trade.symbol}</span>
+          <span className={`px-1 sm:px-1.5 py-0.5 rounded text-xxs font-bold ${
             isLong ? 'bg-bull/15 text-bull' : 'bg-bear/15 text-bear'
           }`}>
-            {trade.side}
+            {sideText(trade.side)}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-base font-bold tabular-nums ${pnlColor}`}>
+        <div className="flex items-center gap-1 sm:gap-2">
+          <span className={`text-sm sm:text-base font-bold tabular-nums ${pnlColor}`}>
             {safeDollar(trade.net_pnl)}
           </span>
-          <span className={`text-xs tabular-nums ${pnlColor}`}>
+          <span className={`text-xxs sm:text-xs tabular-nums ${pnlColor}`}>
             ({safePct(trade.net_pnl_pct, 1)})
           </span>
         </div>
       </div>
 
-      <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-1.5 text-text-secondary">
+      <div className="flex items-center justify-between text-xxs sm:text-xs flex-wrap gap-1">
+        <div className="flex items-center gap-1 sm:gap-1.5 text-text-secondary">
           <span className="tabular-nums">${fmtPrice(trade.entry_price)}</span>
           <span className={`font-medium ${priceDirColor}`}>{priceDir}</span>
           <span className="tabular-nums">${fmtPrice(trade.exit_price)}</span>
-          <span className="text-text-tertiary ml-1">({trade.leverage ?? '--'}x · ${trade.notional != null ? Math.round(trade.notional).toLocaleString() : '--'})</span>
+          <span className="hidden sm:inline text-text-tertiary ml-1">({trade.leverage ?? '--'}x · ${trade.notional != null ? Math.round(trade.notional).toLocaleString() : '--'})</span>
         </div>
-        <span className="text-text-tertiary">持仓 {fmtDur(trade.duration_s)}</span>
+        <span className="text-text-tertiary">{fmtDur(trade.duration_s)}</span>
       </div>
 
-      <div className="flex items-center justify-between text-xxs text-text-tertiary mt-1.5">
-        <div className="flex items-center gap-3">
-          <span>入场: <span className={sig.color}>{sig.text}</span> (conf {safe((trade.confidence_entry ?? 0) * 100, 0)}%)</span>
-          <span>平仓: <span className={exit.color}>{exit.text}</span></span>
+      <div className="flex items-center justify-between text-xxs text-text-tertiary mt-1 sm:mt-1.5 flex-wrap gap-1">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <span><span className={sig.color}>{sig.text}</span> → <span className={exit.color}>{exit.text}</span></span>
         </div>
-        <span>手续费 ${safe(trade.fee_cost)}</span>
+        <span>费 ${safe(trade.fee_cost)}</span>
       </div>
     </div>
   );
@@ -567,23 +572,23 @@ export default function PaperTradingPanel() {
   const allSignalLog = signalLog || [];
 
   return (
-    <div className="card p-6 space-y-5">
+    <div className="card p-3 sm:p-6 space-y-4 sm:space-y-5">
 
       {/* ── 标题栏 ── */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <h3 className="text-sm font-semibold text-text-primary">纸盘交易</h3>
-          <div className="flex items-center gap-1.5 text-xxs text-text-tertiary">
-            <span className="px-1.5 py-0.5 rounded bg-surface-2">
+          <div className="flex items-center gap-1 sm:gap-1.5 text-xxs text-text-tertiary flex-wrap">
+            <span className="px-1 sm:px-1.5 py-0.5 rounded bg-surface-2">
               {(cfg.leverage as number) || 10}x
             </span>
-            <span className="px-1.5 py-0.5 rounded bg-surface-2">
+            <span className="px-1 sm:px-1.5 py-0.5 rounded bg-surface-2">
               止损 {(cfg.stop_loss_pct as number) || 2}%
             </span>
-            <span className="px-1.5 py-0.5 rounded bg-surface-2">
+            <span className="px-1 sm:px-1.5 py-0.5 rounded bg-surface-2">
               止盈 {(cfg.take_profit_pct as number) || 0}%
             </span>
-            <span className="px-1.5 py-0.5 rounded bg-surface-2">
+            <span className="hidden sm:inline px-1.5 py-0.5 rounded bg-surface-2">
               冷却 {(cfg.cooldown_s as number) || 60}s
             </span>
           </div>
@@ -598,10 +603,10 @@ export default function PaperTradingPanel() {
       </div>
 
       {/* ── 核心指标栏 ── */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-x-6 gap-y-3 py-3 border-y border-surface-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 sm:gap-x-6 gap-y-2 sm:gap-y-3 py-2 sm:py-3 border-y border-surface-3">
         <MetricCard
           label="净值"
-          value={`$${(account?.equity ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+          value={`$${(account?.equity ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`}
           sub={`初始 $${(account?.initial_balance ?? 10000).toLocaleString()}`}
           color={returnColor}
           large

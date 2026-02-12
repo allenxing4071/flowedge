@@ -6,7 +6,7 @@ KKline 对接桥、系统状态等端点。
 数据流架构：
   6 条 WS 流 + 3 个 REST 采集器
        ↓
-  11 个特征计算器 (FeatureEngine)
+  17 个特征计算器 (FeatureEngine)
        ↓
   多因子评分 + 异常检测 (SignalEngine)
        ↓
@@ -143,7 +143,7 @@ async def lifespan(app: FastAPI):
         f"[FlowEdge v3.0] 已启动 — "
         f"{' + '.join(sources)} | "
         f"监控 {cfg.WATCH_SYMBOLS} | "
-        f"11 特征计算器 + 信号引擎"
+        f"17 特征计算器 + 信号引擎 + 订单流可视化"
     )
 
     yield
@@ -195,7 +195,7 @@ async def health():
 async def features_snapshot(
     symbol: Optional[str] = Query(None, description="币种（如 BTCUSDT）")
 ):
-    """获取当前所有 11 个特征的快照"""
+    """获取当前所有特征的快照（含冰山单摘要）"""
     return engine.get_snapshot(symbol=symbol)
 
 
@@ -351,6 +351,98 @@ async def dashboard():
     专为前端 UI 优化的聚合端点。
     """
     return signal_engine.get_dashboard()
+
+
+# ══════════════════════════════════════════
+# 订单流可视化端点（Tape / DOM / Footprint / 冰山单）
+# ══════════════════════════════════════════
+
+@app.get("/orderflow/{symbol}", response_class=OrjsonResponse)
+async def orderflow_snapshot(symbol: str):
+    """完整订单流可视化数据（Tape + Footprint + 冰山单）"""
+    result = engine.get_orderflow_snapshot(symbol)
+    if not result:
+        return OrjsonResponse(
+            content={"error": f"未找到 {symbol.upper()} 的数据"},
+            status_code=404,
+        )
+    return result
+
+
+@app.get("/orderflow/{symbol}/tape", response_class=OrjsonResponse)
+async def orderflow_tape(symbol: str):
+    """Tape 逐笔成交流（最近 200 笔 + 实时统计）"""
+    result = engine.get_tape(symbol.upper())
+    if not result:
+        return OrjsonResponse(
+            content={"error": f"未找到 {symbol.upper()} 的 Tape 数据"},
+            status_code=404,
+        )
+    return result
+
+
+@app.get("/orderflow/{symbol}/dom", response_class=OrjsonResponse)
+async def orderflow_dom(symbol: str):
+    """DOM 订单簿深度热力图（20 档买卖 + 假墙检测）"""
+    result = engine.get_dom(symbol.upper())
+    if not result:
+        return OrjsonResponse(
+            content={"error": f"未找到 {symbol.upper()} 的 DOM 数据"},
+            status_code=404,
+        )
+    return result
+
+
+@app.get("/orderflow/{symbol}/footprint", response_class=OrjsonResponse)
+async def orderflow_footprint(symbol: str):
+    """Footprint Chart 数据（1 分钟 K 线 × 价格档位买卖量）"""
+    result = engine.get_footprint(symbol.upper())
+    if not result:
+        return OrjsonResponse(
+            content={"error": f"未找到 {symbol.upper()} 的 Footprint 数据"},
+            status_code=404,
+        )
+    return result
+
+
+@app.get("/orderflow/{symbol}/iceberg", response_class=OrjsonResponse)
+async def orderflow_iceberg(symbol: str):
+    """冰山单 / 单一 ID 推量检测（拆单模式识别）"""
+    result = engine.get_iceberg(symbol.upper())
+    if not result:
+        return OrjsonResponse(
+            content={"error": f"未找到 {symbol.upper()} 的冰山单数据"},
+            status_code=404,
+        )
+    return result
+
+
+@app.get("/orderflow/{symbol}/stream")
+async def orderflow_stream(symbol: str):
+    """SSE 订单流实时推送（Tape + DOM + Footprint + 冰山单，500ms 间隔）"""
+    symbol = symbol.upper()
+
+    async def event_generator():
+        try:
+            while True:
+                data = engine.get_orderflow_snapshot(symbol)
+                if data:
+                    # 同时附加 DOM 数据
+                    data["dom"] = engine.get_dom(symbol)
+                    yield f"data: {orjson.dumps(data).decode()}\n\n"
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            raise
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ══════════════════════════════════════════

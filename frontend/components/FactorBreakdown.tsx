@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useSignalDetail, FactorDetail, AnomalyDetail, formatScore, signalLabel, signalColor, riskColor } from '@/lib/hooks';
+import { useSignalDetail, FactorDetail, AnomalyDetail, formatScore, signalLabel, signalColor, riskColor, riskLabel } from '@/lib/hooks';
 
 interface Props {
   symbol: string;
@@ -33,30 +33,30 @@ function FactorRow({ factor }: { factor: FactorDetail }) {
   const label = FACTOR_LABELS[factor.name] || factor.name;
 
   return (
-    <div className="group py-3.5 border-b border-surface-3/20 last:border-0">
+    <div className="group py-2.5 sm:py-3.5 border-b border-surface-3/20 last:border-0">
       {/* 名称 + 权重 + 得分 */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-text-primary">{label}</span>
-          <span className="text-xs text-text-tertiary mono-num">
+      <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <span className="text-xs sm:text-sm font-medium text-text-primary">{label}</span>
+          <span className="text-xxs sm:text-xs text-text-tertiary mono-num">
             {(factor.weight * 100).toFixed(0)}%
           </span>
         </div>
-        <div className="flex items-center gap-3">
-          <span className={`text-base mono-num font-bold ${
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          <span className={`text-sm sm:text-base mono-num font-bold ${
             factor.score > 0.05 ? 'text-bull' :
             factor.score < -0.05 ? 'text-bear' : 'text-text-secondary'
           }`}>
             {formatScore(factor.score)}
           </span>
-          <span className="text-xs mono-num text-text-tertiary">
+          <span className="hidden sm:inline text-xs mono-num text-text-tertiary">
             ({factor.weighted_score > 0 ? '+' : ''}{(factor.weighted_score * 100).toFixed(1)})
           </span>
         </div>
       </div>
 
       {/* 得分条 */}
-      <div className="factor-bar-container h-1.5 mb-2">
+      <div className="factor-bar-container h-1 sm:h-1.5 mb-1.5 sm:mb-2">
         {isPositive ? (
           <div
             className="factor-bar-positive"
@@ -72,7 +72,7 @@ function FactorRow({ factor }: { factor: FactorDetail }) {
       </div>
 
       {/* 原因说明 */}
-      <div className="text-xs text-text-tertiary leading-relaxed">
+      <div className="text-xxs sm:text-xs text-text-tertiary leading-relaxed line-clamp-2 sm:line-clamp-none">
         {factor.reason}
       </div>
     </div>
@@ -80,6 +80,12 @@ function FactorRow({ factor }: { factor: FactorDetail }) {
 }
 
 function AnomalyItem({ anomaly }: { anomaly: AnomalyDetail }) {
+  const severityLabel: Record<string, string> = {
+    LOW: '低',
+    MEDIUM: '中',
+    HIGH: '高',
+    CRITICAL: '严重',
+  };
   const severityColor: Record<string, string> = {
     LOW: 'text-text-secondary',
     MEDIUM: 'text-warn',
@@ -90,7 +96,7 @@ function AnomalyItem({ anomaly }: { anomaly: AnomalyDetail }) {
   return (
     <div className="flex items-start gap-3 py-3 border-b border-surface-3/20 last:border-0">
       <span className={`text-xs font-bold mt-0.5 ${severityColor[anomaly.severity] || 'text-text-secondary'}`}>
-        {anomaly.severity}
+        {severityLabel[anomaly.severity] || anomaly.severity}
       </span>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-anomaly">{anomaly.title}</div>
@@ -129,22 +135,22 @@ export default function FactorBreakdown({ symbol, onClose }: Props) {
   return (
     <div className="card overflow-hidden animate-slide-up">
       {/* 头部 */}
-      <div className="px-6 py-5 border-b border-surface-3/50 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <span className="text-2xl font-bold">{symbol}</span>
-          <span className={`badge text-sm px-3 py-1 ${
+      <div className="px-3 sm:px-6 py-3 sm:py-5 border-b border-surface-3/50 flex items-center justify-between">
+        <div className="flex items-center gap-2 sm:gap-4">
+          <span className="text-lg sm:text-2xl font-bold">{symbol}</span>
+          <span className={`badge text-xxs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 ${
             data.signal.includes('BUY') ? 'badge-bull' :
             data.signal.includes('SELL') ? 'badge-bear' : 'badge-neutral'
           }`}>
             {signalLabel(data.signal)}
           </span>
-          <span className={`text-xl mono-num font-bold ${signalColor(data.signal)}`}>
+          <span className={`text-base sm:text-xl mono-num font-bold ${signalColor(data.signal)}`}>
             {formatScore(data.score)}
           </span>
         </div>
         <button
           onClick={onClose}
-          className="text-text-tertiary hover:text-text-primary transition-colors text-sm px-3 py-1.5 rounded-lg hover:bg-surface-3"
+          className="text-text-tertiary hover:text-text-primary transition-colors text-xs sm:text-sm px-2 sm:px-3 py-1.5 rounded-lg hover:bg-surface-3 min-h-[36px]"
         >
           关闭
         </button>
@@ -152,8 +158,8 @@ export default function FactorBreakdown({ symbol, onClose }: Props) {
 
       <div className="flex flex-col lg:flex-row">
         {/* 左：因子列表 */}
-        <div className="flex-1 px-6 py-4 border-r border-surface-3/30">
-          <div className="text-xs text-text-tertiary uppercase tracking-wider mb-3 font-medium">
+        <div className="flex-1 px-3 sm:px-6 py-3 sm:py-4 border-r border-surface-3/30">
+          <div className="text-xxs sm:text-xs text-text-tertiary uppercase tracking-wider mb-2 sm:mb-3 font-medium">
             11 因子评分
           </div>
           <div>
@@ -166,33 +172,33 @@ export default function FactorBreakdown({ symbol, onClose }: Props) {
         </div>
 
         {/* 右：异常 + 统计 */}
-        <div className="w-full lg:w-96 px-6 py-4">
+        <div className="w-full lg:w-80 xl:w-96 px-3 sm:px-6 py-3 sm:py-4">
           {/* 统计概览 */}
-          <div className="text-xs text-text-tertiary uppercase tracking-wider mb-3 font-medium">
+          <div className="text-xxs sm:text-xs text-text-tertiary uppercase tracking-wider mb-2 sm:mb-3 font-medium">
             信号概况
           </div>
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-surface-2 rounded-xl p-4">
-              <div className="text-xs text-text-tertiary mb-1">置信度</div>
-              <div className="text-2xl mono-num font-bold">
+          <div className="grid grid-cols-4 lg:grid-cols-2 gap-2 sm:gap-4 mb-4 sm:mb-6">
+            <div className="bg-surface-2 rounded-lg sm:rounded-xl p-2 sm:p-4">
+              <div className="text-xxs text-text-tertiary mb-0.5 sm:mb-1">置信度</div>
+              <div className="text-base sm:text-2xl mono-num font-bold">
                 {(data.confidence * 100).toFixed(0)}%
               </div>
             </div>
-            <div className="bg-surface-2 rounded-xl p-4">
-              <div className="text-xs text-text-tertiary mb-1">风险</div>
-              <div className={`text-2xl font-bold ${riskColor(data.risk_level)}`}>
-                {data.risk_level}
+            <div className="bg-surface-2 rounded-lg sm:rounded-xl p-2 sm:p-4">
+              <div className="text-xxs text-text-tertiary mb-0.5 sm:mb-1">风险</div>
+              <div className={`text-base sm:text-2xl font-bold ${riskColor(data.risk_level)}`}>
+                {riskLabel(data.risk_level)}
               </div>
             </div>
-            <div className="bg-surface-2 rounded-xl p-4">
-              <div className="text-xs text-text-tertiary mb-1">看多因子</div>
-              <div className="text-2xl mono-num font-bold text-bull">
+            <div className="bg-surface-2 rounded-lg sm:rounded-xl p-2 sm:p-4">
+              <div className="text-xxs text-text-tertiary mb-0.5 sm:mb-1">看多</div>
+              <div className="text-base sm:text-2xl mono-num font-bold text-bull">
                 {data.bullish_count}
               </div>
             </div>
-            <div className="bg-surface-2 rounded-xl p-4">
-              <div className="text-xs text-text-tertiary mb-1">看空因子</div>
-              <div className="text-2xl mono-num font-bold text-bear">
+            <div className="bg-surface-2 rounded-lg sm:rounded-xl p-2 sm:p-4">
+              <div className="text-xxs text-text-tertiary mb-0.5 sm:mb-1">看空</div>
+              <div className="text-base sm:text-2xl mono-num font-bold text-bear">
                 {data.bearish_count}
               </div>
             </div>

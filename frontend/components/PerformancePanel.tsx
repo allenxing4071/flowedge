@@ -10,7 +10,7 @@
 
 'use client';
 
-import { usePerformance, PerformanceData, WindowStats, formatTimestamp, signalColor } from '@/lib/hooks';
+import { usePerformance, PerformanceData, WindowStats, formatTimestamp, signalColor, signalLabel } from '@/lib/hooks';
 
 function WinRateBar({ rate, label, total }: { rate: number; label: string; total: number }) {
   // 50% 为基准线，>55% 绿，<50% 红
@@ -83,15 +83,15 @@ function SignalTypeTable({ bySignal }: { bySignal: Record<string, Record<string,
         <thead>
           <tr className="border-b border-surface-2">
             <th className="text-left py-2 text-text-tertiary font-medium">信号类型</th>
-            <th className="text-right py-2 text-text-tertiary font-medium">5m 胜率</th>
-            <th className="text-right py-2 text-text-tertiary font-medium">15m 胜率</th>
-            <th className="text-right py-2 text-text-tertiary font-medium">1h 胜率</th>
+            <th className="text-right py-2 text-text-tertiary font-medium">5分 胜率</th>
+            <th className="text-right py-2 text-text-tertiary font-medium">15分 胜率</th>
+            <th className="text-right py-2 text-text-tertiary font-medium">1时 胜率</th>
           </tr>
         </thead>
         <tbody>
           {signals.map(([signal, windows]) => (
             <tr key={signal} className="border-b border-surface-2/50">
-              <td className={`py-2 font-medium ${signalColor(signal)}`}>{signal}</td>
+              <td className={`py-2 font-medium ${signalColor(signal)}`}>{signalLabel(signal)}</td>
               {['5m', '15m', '1h'].map((w) => {
                 const ws = windows[w];
                 const rate = ws?.win_rate ?? 0;
@@ -130,9 +130,9 @@ function RecentTracks({ recent }: { recent: PerformanceData['recent'] }) {
             <th className="text-left py-2 text-text-tertiary font-medium">币种</th>
             <th className="text-left py-2 text-text-tertiary font-medium">信号</th>
             <th className="text-right py-2 text-text-tertiary font-medium">入场价</th>
-            <th className="text-right py-2 text-text-tertiary font-medium">5m</th>
-            <th className="text-right py-2 text-text-tertiary font-medium">15m</th>
-            <th className="text-right py-2 text-text-tertiary font-medium">1h</th>
+            <th className="text-right py-2 text-text-tertiary font-medium">5分</th>
+            <th className="text-right py-2 text-text-tertiary font-medium">15分</th>
+            <th className="text-right py-2 text-text-tertiary font-medium">1时</th>
           </tr>
         </thead>
         <tbody>
@@ -145,7 +145,7 @@ function RecentTracks({ recent }: { recent: PerformanceData['recent'] }) {
                 {r.symbol.replace('USDT', '')}
               </td>
               <td className={`py-2 font-medium ${signalColor(r.signal)}`}>
-                {r.signal}
+                {signalLabel(r.signal)}
               </td>
               <td className="py-2 text-right mono-num text-text-secondary">
                 ${r.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -234,19 +234,19 @@ export default function PerformancePanel() {
           sub="有方向信号"
         />
         <StatCard
-          title="5m 胜率"
+          title="5分 胜率"
           value={w['5m']?.total > 0 ? `${w['5m'].win_rate.toFixed(1)}%` : '--'}
           sub={w['5m']?.total > 0 ? `${w['5m'].correct}/${w['5m'].total}` : '待收集'}
           color={w['5m']?.win_rate >= 55 ? 'text-bull' : w['5m']?.win_rate >= 50 ? 'text-info' : 'text-bear'}
         />
         <StatCard
-          title="15m 胜率"
+          title="15分 胜率"
           value={w['15m']?.total > 0 ? `${w['15m'].win_rate.toFixed(1)}%` : '--'}
           sub={w['15m']?.total > 0 ? `${w['15m'].correct}/${w['15m'].total}` : '待收集'}
           color={w['15m']?.win_rate >= 52 ? 'text-bull' : w['15m']?.win_rate >= 50 ? 'text-info' : 'text-bear'}
         />
         <StatCard
-          title="1h 胜率"
+          title="1时 胜率"
           value={w['1h']?.total > 0 ? `${w['1h'].win_rate.toFixed(1)}%` : '--'}
           sub={w['1h']?.total > 0 ? `${w['1h'].correct}/${w['1h'].total}` : '待收集'}
           color={w['1h']?.win_rate >= 52 ? 'text-bull' : w['1h']?.win_rate >= 50 ? 'text-info' : 'text-bear'}

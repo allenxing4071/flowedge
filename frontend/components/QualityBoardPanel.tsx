@@ -95,30 +95,34 @@ function fmtPct(v: number, digits = 1): string {
 }
 
 function fmtNum(v: number): string {
-  return v.toLocaleString('en-US');
+  return v.toLocaleString('zh-CN');
 }
 
 // ══════════════════════════════════════════
 // 子组件：漏斗柱
 // ══════════════════════════════════════════
 
-function FunnelBar({ label, value, total, color }: {
+function FunnelBar({ label, shortLabel, value, total, color }: {
   label: string;
+  shortLabel?: string;
   value: number;
   total: number;
   color: string;
 }) {
   const pct = total > 0 ? (value / total) * 100 : 0;
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-text-secondary">{label}</span>
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between text-xxs sm:text-xs">
+        <span className="text-text-secondary">
+          <span className="sm:hidden">{shortLabel || label}</span>
+          <span className="hidden sm:inline">{label}</span>
+        </span>
         <span className="text-text-primary tabular-nums font-medium">
-          {fmtNum(value)} <span className="text-text-tertiary">/ {fmtNum(total)}</span>
-          <span className="text-text-tertiary ml-1">({fmtPct(pct)})</span>
+          {fmtPct(pct)}
+          <span className="hidden sm:inline text-text-tertiary ml-1">({fmtNum(value)}/{fmtNum(total)})</span>
         </span>
       </div>
-      <div className="h-3 bg-surface-2 rounded-full overflow-hidden">
+      <div className="h-2 sm:h-3 bg-surface-2 rounded-full overflow-hidden">
         <div
           className={`h-full ${color} rounded-full transition-all duration-700`}
           style={{ width: `${Math.max(pct, 0.5)}%` }}
@@ -134,9 +138,9 @@ function FunnelBar({ label, value, total, color }: {
 
 function DirectionBar({ dist }: { dist: DirectionDist }) {
   const bars = [
-    { label: 'LONG', pct: dist.long_pct, count: dist.LONG, color: 'bg-bull' },
-    { label: 'NEUTRAL', pct: dist.neutral_pct, count: dist.NEUTRAL, color: 'bg-text-tertiary/50' },
-    { label: 'SHORT', pct: dist.short_pct, count: dist.SHORT, color: 'bg-bear' },
+    { label: '多头', pct: dist.long_pct, count: dist.LONG, color: 'bg-bull' },
+    { label: '中性', pct: dist.neutral_pct, count: dist.NEUTRAL, color: 'bg-text-tertiary/50' },
+    { label: '空头', pct: dist.short_pct, count: dist.SHORT, color: 'bg-bear' },
   ];
 
   return (
@@ -159,7 +163,7 @@ function DirectionBar({ dist }: { dist: DirectionDist }) {
       </div>
 
       {/* 图例 */}
-      <div className="flex items-center justify-center gap-6 text-xs">
+      <div className="flex items-center justify-center gap-3 sm:gap-6 text-xxs sm:text-xs flex-wrap">
         {bars.map(b => (
           <div key={b.label} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-sm ${b.color}`} />
@@ -190,12 +194,12 @@ function MiniCard({ label, value, sub, color }: {
   color?: string;
 }) {
   return (
-    <div className="bg-surface-1 rounded-lg p-3 text-center">
+    <div className="bg-surface-1 rounded-lg p-2 sm:p-3 text-center">
       <div className="text-xxs text-text-tertiary mb-0.5">{label}</div>
-      <div className={`text-lg font-bold tabular-nums ${color || 'text-text-primary'}`}>
+      <div className={`text-base sm:text-lg font-bold tabular-nums ${color || 'text-text-primary'}`}>
         {value}
       </div>
-      {sub && <div className="text-xxs text-text-tertiary mt-0.5">{sub}</div>}
+      {sub && <div className="text-xxs text-text-tertiary mt-0.5 truncate">{sub}</div>}
     </div>
   );
 }
@@ -322,16 +326,16 @@ function RegimeDistribution({ regimes }: { regimes: Record<string, number> }) {
     .sort((a, b) => b[1] - a[1]);
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-1.5 sm:gap-2">
       {items.map(([regime, count]) => {
         const pct = (count / total * 100).toFixed(0);
         const cls = regimeColors[regime] || 'bg-surface-2 text-text-tertiary';
         const label = regimeLabels[regime] || regime;
         return (
-          <div key={regime} className={`px-3 py-2 rounded-lg ${cls} flex flex-col items-center min-w-[70px]`}>
-            <span className="text-xs font-medium">{label}</span>
-            <span className="text-lg font-bold tabular-nums">{pct}%</span>
-            <span className="text-xxs opacity-60">{count} 次</span>
+          <div key={regime} className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg ${cls} flex flex-col items-center min-w-[52px] sm:min-w-[70px]`}>
+            <span className="text-xxs sm:text-xs font-medium">{label}</span>
+            <span className="text-sm sm:text-lg font-bold tabular-nums">{pct}%</span>
+            <span className="text-xxs opacity-60">{count}</span>
           </div>
         );
       })}
@@ -384,28 +388,28 @@ export default function QualityBoardPanel() {
   const timeRange = data.time_range;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3 sm:space-y-5">
 
       {/* ── 标题栏 ── */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start sm:items-center justify-between flex-wrap gap-2">
         <div>
-          <h2 className="text-xl font-bold text-text-primary">质量看板</h2>
-          <p className="text-sm text-text-tertiary mt-0.5">
-            四层门卫框架健康诊断
+          <h2 className="text-base sm:text-xl font-bold text-text-primary">质量看板</h2>
+          <p className="text-xxs sm:text-sm text-text-tertiary mt-0.5">
+            四层门卫诊断
             {timeRange && timeRange.duration_hours > 0 && (
-              <span className="ml-2">
-                （最近 {timeRange.duration_hours}h · {fmtNum(data.sample_size || 0)} 次评估）
+              <span className="ml-1 sm:ml-2">
+                （{timeRange.duration_hours}h · {fmtNum(data.sample_size || 0)} 次）
               </span>
             )}
           </p>
         </div>
-        <div className="text-xxs text-text-tertiary px-2 py-1 bg-surface-1 rounded">
+        <div className="text-xxs text-text-tertiary px-2 py-1 bg-surface-1 rounded max-w-[120px] sm:max-w-none truncate">
           {data.confidence_note}
         </div>
       </div>
 
       {/* ── 核心指标卡片 ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
         <MiniCard
           label="门卫通过率"
           value={fmtPct(funnel.final_pass_rate)}
@@ -413,13 +417,13 @@ export default function QualityBoardPanel() {
           color={funnel.final_pass_rate > 20 ? 'text-warn' : funnel.final_pass_rate > 5 ? 'text-info' : 'text-bull'}
         />
         <MiniCard
-          label="LONG 占比"
+          label="多头占比"
           value={fmtPct(dirDist.long_pct)}
           sub={`${dirDist.LONG} 次`}
           color="text-bull"
         />
         <MiniCard
-          label="SHORT 占比"
+          label="空头占比"
           value={fmtPct(dirDist.short_pct)}
           sub={`${dirDist.SHORT} 次`}
           color="text-bear"
@@ -432,38 +436,43 @@ export default function QualityBoardPanel() {
       </div>
 
       {/* ── 四层门卫漏斗 ── */}
-      <div className="card p-6 space-y-4">
-        <h3 className="text-base font-semibold text-text-primary">四层门卫漏斗</h3>
-        <p className="text-xxs text-text-tertiary">
+      <div className="card p-3 sm:p-6 space-y-3 sm:space-y-4">
+        <h3 className="text-sm sm:text-base font-semibold text-text-primary">四层门卫漏斗</h3>
+        <p className="text-xxs text-text-tertiary hidden sm:block">
           每次信号评估都经过四层过滤。以下展示各层的独立通过率和拒绝分布。
         </p>
         <FunnelBar
-          label="L1 环境分类 (MarketRegime)"
+          label="L1 环境分类"
+          shortLabel="L1 环境"
           value={funnel.regime_passed}
           total={funnel.total_evaluations}
           color="bg-info"
         />
         <FunnelBar
-          label="L2 位置过滤 (LocationFilter)"
+          label="L2 位置过滤"
+          shortLabel="L2 位置"
           value={funnel.location_passed}
           total={funnel.total_evaluations}
           color="bg-bull/70"
         />
         <FunnelBar
-          label="L3 行为确认 (BehaviorConfirm)"
+          label="L3 行为确认"
+          shortLabel="L3 行为"
           value={funnel.behavior_passed}
           total={funnel.total_evaluations}
           color="bg-warn"
         />
         <FunnelBar
-          label="L4 方向确认 (DirectionConfirm)"
+          label="L4 方向确认"
+          shortLabel="L4 方向"
           value={funnel.direction_passed}
           total={funnel.total_evaluations}
           color="bg-bull"
         />
-        <div className="border-t border-surface-2 pt-3">
+        <div className="border-t border-surface-2 pt-2 sm:pt-3">
           <FunnelBar
             label="最终通过（全部四层）"
+            shortLabel="通过"
             value={funnel.final_passed}
             total={funnel.total_evaluations}
             color="bg-gradient-to-r from-bull to-info"
@@ -492,46 +501,47 @@ export default function QualityBoardPanel() {
       </div>
 
       {/* ── 方向分布 ── */}
-      <div className="card p-6 space-y-3">
-        <h3 className="text-base font-semibold text-text-primary">方向分布</h3>
-        <p className="text-xxs text-text-tertiary">
-          LONG/SHORT 应基本均衡。单方向 &gt;70% 提示方向偏见。NEUTRAL &gt;95% 提示门卫过严。
+      <div className="card p-3 sm:p-6 space-y-2 sm:space-y-3">
+        <h3 className="text-sm sm:text-base font-semibold text-text-primary">方向分布</h3>
+        <p className="text-xxs text-text-tertiary hidden sm:block">
+          多头/空头应基本均衡。单方向 &gt;70% 提示方向偏见。中性 &gt;95% 提示门卫过严。
         </p>
         <DirectionBar dist={dirDist} />
       </div>
 
       {/* ── 两列区域：环境分布 + 拒绝原因 ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-6">
 
         {/* 市场环境分布 */}
-        <div className="card p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-text-primary">市场环境分布</h3>
-          <p className="text-xxs text-text-tertiary">
-            门卫 L1 层识别的市场状态分布
-          </p>
+        <div className="card p-3 sm:p-6 space-y-2 sm:space-y-3">
+          <h3 className="text-xs sm:text-sm font-semibold text-text-primary">市场环境分布</h3>
           <RegimeDistribution regimes={regimeDist} />
         </div>
 
         {/* 拒绝原因 Top N */}
-        <div className="card p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-text-primary">拒绝原因 Top</h3>
+        <div className="card p-3 sm:p-6 space-y-2 sm:space-y-3">
+          <h3 className="text-xs sm:text-sm font-semibold text-text-primary">拒绝原因前列</h3>
           {rejects.length > 0 ? (
-            <div className="space-y-2">
-              {rejects.slice(0, 8).map((r, i) => {
+            <div className="space-y-1.5 sm:space-y-2">
+              {rejects.slice(0, 6).map((r, i) => {
                 const maxCount = rejects[0].count;
                 const pct = maxCount > 0 ? (r.count / maxCount) * 100 : 0;
+                const totalRejects = rejects.reduce((s, x) => s + x.count, 0);
+                const reasonPct = totalRejects > 0 ? ((r.count / totalRejects) * 100).toFixed(0) : '0';
                 return (
-                  <div key={i} className="space-y-0.5">
-                    <div className="flex items-center justify-between text-xxs">
-                      <span className="text-text-secondary truncate max-w-[70%]">{r.reason}</span>
-                      <span className="text-text-tertiary tabular-nums">{r.count}</span>
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-bear/40 rounded-full"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-bear/40 rounded-full"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
+                    <span className="text-xxs tabular-nums text-text-primary font-medium flex-shrink-0 w-8 text-right">{reasonPct}%</span>
+                    <span className="text-xxs text-text-tertiary truncate flex-shrink-0 max-w-[45%] sm:max-w-[55%]" title={r.reason}>
+                      {r.reason.length > 20 ? r.reason.slice(0, 20) + '…' : r.reason}
+                    </span>
                   </div>
                 );
               })}
@@ -544,12 +554,12 @@ export default function QualityBoardPanel() {
 
       {/* ── 动态止损/止盈统计 ── */}
       {sltp && sltp.count > 0 && (
-        <div className="card p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-text-primary">门卫动态止损/止盈</h3>
-          <p className="text-xxs text-text-tertiary">
+        <div className="card p-3 sm:p-6 space-y-2 sm:space-y-3">
+          <h3 className="text-xs sm:text-sm font-semibold text-text-primary">动态止损/止盈</h3>
+          <p className="text-xxs text-text-tertiary hidden sm:block">
             门卫通过的信号自动计算结构性止损/止盈（基于 VAH/VAL/HVN）
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
             <MiniCard
               label="平均止损"
               value={`${sltp.avg_sl_pct}%`}
@@ -578,9 +588,9 @@ export default function QualityBoardPanel() {
 
       {/* ── 纸盘交易表现对比 ── */}
       {tradePerf && (
-        <div className="card p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-text-primary">交易表现对比</h3>
-          <p className="text-xxs text-text-tertiary">
+        <div className="card p-3 sm:p-6 space-y-2 sm:space-y-3">
+          <h3 className="text-xs sm:text-sm font-semibold text-text-primary">交易表现对比</h3>
+          <p className="text-xxs text-text-tertiary hidden sm:block">
             门卫动态止损 vs 固定配置止损的实际表现
           </p>
           <TradeCompare perf={tradePerf} />

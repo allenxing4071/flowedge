@@ -135,6 +135,12 @@ class SignalEngine:
         results = {}
 
         for symbol, features in snapshot.items():
+            # ── 市场活跃度自适应：先判断环境，再动态调整因子权重 ──
+            # 学术依据：订单流信号在高波动期有效，低波动期失效
+            regime_result = self.gate._classify_regime(features)
+            detected_regime = regime_result.data.get("regime", "unclear")
+            self.scorer.set_regime(detected_regime)
+
             # 多因子评分（传入 symbol 用于滞后区状态追踪）
             signal = self.scorer.score(features, timestamp_ms=now_ms, symbol=symbol)
 

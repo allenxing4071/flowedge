@@ -353,7 +353,7 @@ function PushCard({ push }: {
               className="text-xs font-mono"
               style={{ color: confPct >= 60 ? '#00e5ff' : '#94a3b8' }}
             >
-              conf={confPct}%
+              置信={confPct}%
             </span>
             {/* 推送结果 */}
             {push.success ? (
@@ -377,12 +377,12 @@ function PushCard({ push }: {
           <div className="mt-1.5 flex items-center gap-3 text-xs flex-wrap">
             {/* 评分 */}
             <span className="text-text-secondary">
-              score <span className="font-mono text-text-primary">{push.score?.toFixed(3) ?? '--'}</span>
+              评分 <span className="font-mono text-text-primary">{push.score?.toFixed(3) ?? '--'}</span>
             </span>
             {/* KKline 信号 ID */}
             {push.kkline_signal_id && (
               <span style={{ color: '#00e5ff' }}>
-                KKline #{push.kkline_signal_id}
+                KKline 信号#{push.kkline_signal_id}
               </span>
             )}
           </div>

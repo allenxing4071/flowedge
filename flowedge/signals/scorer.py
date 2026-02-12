@@ -114,10 +114,57 @@ class SignalScorer:
     多因子评分器：读取特征快照 dict → 输出 CompositeSignal。
     """
 
+    # 市场活跃度自适应：不同环境下的微观结构因子权重倍率
+    # 学术依据：订单流信号在高波动期有效（+0.60%），低波动期失效（-0.16%）
+    REGIME_MULTIPLIERS = {
+        "trending":   {"micro": 1.2, "macro": 0.8},   # 趋势中微观信号更可靠
+        "breakout":   {"micro": 1.3, "macro": 0.7},   # 突破时微观信号最强
+        "ranging":    {"micro": 0.8, "macro": 1.2},   # 震荡中宏观因子更重要
+        "extreme":    {"micro": 0.5, "macro": 0.5},   # 极端环境全部降权
+        "unclear":    {"micro": 0.7, "macro": 0.7},   # 不明确时保守
+    }
+
+    # 微观结构因子列表（受市场活跃度影响最大的因子）
+    MICRO_FACTORS = {"cvd", "ofi", "book_imbalance", "large_trade", "depth_change",
+                     "absorption", "vwap", "volume_profile"}
+    # 宏观因子列表
+    MACRO_FACTORS = {"funding", "liquidation", "sentiment", "trend", "vpin", "oi"}
+
     def __init__(self, weights: Optional[dict] = None):
-        self.weights = weights or DEFAULT_WEIGHTS.copy()
+        self._base_weights = weights or DEFAULT_WEIGHTS.copy()
+        self.weights = self._base_weights.copy()
         # 每币种上一次确认的信号（用于滞后区判断）
         self._prev_signals: dict[str, str] = {}
+        # 当前市场环境（由 engine 在评估前设置）
+        self._current_regime: str = "unclear"
+
+    def set_regime(self, regime: str) -> None:
+        """
+        根据市场环境动态调整因子权重。
+        由 SignalEngine 在每次评估前调用。
+        """
+        if regime == self._current_regime:
+            return  # 无变化，跳过重算
+
+        self._current_regime = regime
+        mults = self.REGIME_MULTIPLIERS.get(regime, {"micro": 1.0, "macro": 1.0})
+
+        # 按类别应用倍率
+        adjusted = {}
+        for factor, base_w in self._base_weights.items():
+            if factor in self.MICRO_FACTORS:
+                adjusted[factor] = base_w * mults["micro"]
+            elif factor in self.MACRO_FACTORS:
+                adjusted[factor] = base_w * mults["macro"]
+            else:
+                adjusted[factor] = base_w
+
+        # 归一化权重（保证总和 = 1.0）
+        total = sum(adjusted.values())
+        if total > 0:
+            self.weights = {k: v / total for k, v in adjusted.items()}
+        else:
+            self.weights = self._base_weights.copy()
 
     def score(self, features: dict, timestamp_ms: int = 0, symbol: str = "") -> CompositeSignal:
         """
@@ -280,7 +327,14 @@ class SignalScorer:
     # ══════════════════════════════════════════
 
     def _score_cvd(self, cvd: dict) -> FactorScore:
-        """CVD: 买卖 delta 方向 + 5 分钟趋势"""
+        """
+        CVD: 买卖 delta 方向 + 5 分钟趋势 + 量价背离检测。
+
+        增强逻辑（南哥核心方法）：
+          1. 买卖比 → 基础方向信号（60%）
+          2. 5 分钟 CVD 趋势 → 确认信号（20%）
+          3. 量价背离 → 反转预警（20%）— 价格新高但 CVD 未新高 = 看跌
+        """
         w = self.weights.get("cvd", 0.15)
         buy = cvd.get("buy_vol_1m", 0)
         sell = cvd.get("sell_vol_1m", 0)
@@ -289,30 +343,89 @@ class SignalScorer:
         if total < 100:  # 成交量太低，无信号
             return FactorScore("cvd", 0.0, w, 0.0, "成交量不足")
 
-        # 买卖比 → 方向
+        # 1. 买卖比 → 方向（60%）
         ratio = (buy - sell) / total  # [-1, 1]
-        # 5 分钟 CVD 趋势作为确认
+
+        # 2. 5 分钟 CVD 趋势作为确认（20%）
         cvd_5m = cvd.get("cvd_5m", 0)
         if cvd_5m != 0 and total > 0:
             trend_boost = _clamp(cvd_5m / total * 0.3, -0.3, 0.3)
         else:
             trend_boost = 0
 
-        score = _clamp(ratio + trend_boost)
+        base_score = _clamp(ratio * 0.8 + trend_boost * 0.2)
+
+        # 3. 量价背离检测（20%）— 背离信号与基础方向可能相反
+        div_score = cvd.get("divergence_score", 0)
+        div_type = cvd.get("divergence_type", "none")
+
+        if div_type != "none" and abs(div_score) > 0.1:
+            # 背离信号存在 → 混合到总分中
+            # 背离与当前方向相反时，削弱信号；同向时，增强信号
+            score = base_score * 0.8 + div_score * 0.2
+        else:
+            score = base_score
+
+        score = _clamp(score)
         direction = "买方主导" if score > 0 else "卖方主导"
-        return FactorScore("cvd", round(score, 4), w, ratio, f"{direction} 比率{ratio:.2f}")
+        reason = f"{direction} 比率{ratio:.2f}"
+        if div_type == "bearish_div":
+            reason += f" ⚠️看跌背离({div_score:.2f})"
+        elif div_type == "bullish_div":
+            reason += f" ⚠️看涨背离({div_score:.2f})"
+
+        return FactorScore("cvd", round(score, 4), w, ratio, reason)
 
     def _score_ofi(self, ofi: dict) -> FactorScore:
-        """OFI: 订单流不平衡 z-score"""
-        w = self.weights.get("ofi", 0.15)
-        z = ofi.get("z_score_30s", 0)
+        """
+        OFI: 多时间窗口订单流不平衡评分。
 
-        # z-score 直接用 tanh 映射
-        score = _tanh_scale(z, sensitivity=0.5)
-        reason = f"z-score={z:.2f}"
-        if abs(z) > 2:
-            reason += " 极端"
-        return FactorScore("ofi", round(score, 4), w, z, reason)
+        增强逻辑（基于 Cont et al. 2014 + 广义平稳化 OFI 研究）：
+          1. 短期 z-score（30s）作为核心信号
+          2. 长期 z-score（5m）作为趋势确认
+          3. OFI 趋势（加速/减速）作为动量加成
+          4. 多窗口一致性作为置信度加成
+        """
+        w = self.weights.get("ofi", 0.15)
+        z_30s = ofi.get("z_score_30s", 0)
+        z_5m = ofi.get("z_score_5m", 0)
+        trend = ofi.get("ofi_trend", 0)
+        agreement = ofi.get("multi_window_agreement", 0)
+
+        # 核心信号：30s z-score（权重 60%）
+        core_score = _tanh_scale(z_30s, sensitivity=0.5)
+
+        # 长期确认：5m z-score（权重 20%）
+        long_score = _tanh_scale(z_5m, sensitivity=0.4)
+
+        # 趋势动量：OFI 加速方向（权重 20%）
+        trend_score = _tanh_scale(trend, sensitivity=0.8)
+
+        # 基础合成
+        score = core_score * 0.6 + long_score * 0.2 + trend_score * 0.2
+
+        # 多窗口一致性加成：方向一致时增强信号，不一致时削弱
+        if agreement * score > 0:
+            # 一致性与信号同向 → 增强（最多 +30%）
+            boost = abs(agreement) * 0.3
+            score = _clamp(score * (1 + boost))
+        elif abs(agreement) > 0.5 and agreement * score < 0:
+            # 强烈不一致 → 削弱（最多 -30%）
+            score *= 0.7
+
+        reason_parts = [f"z30s={z_30s:.2f}"]
+        if abs(z_5m) > 0.5:
+            reason_parts.append(f"z5m={z_5m:.2f}")
+        if abs(trend) > 0.3:
+            direction = "加速" if trend > 0 else "减速"
+            reason_parts.append(f"趋势{direction}")
+        if abs(agreement) > 0.5:
+            consistency = "一致" if agreement * score > 0 else "分歧"
+            reason_parts.append(f"多窗口{consistency}")
+        if abs(z_30s) > 2:
+            reason_parts.append("极端")
+
+        return FactorScore("ofi", round(score, 4), w, z_30s, " ".join(reason_parts))
 
     def _score_book(self, book: Optional[dict]) -> FactorScore:
         """Book Imbalance: L1 盘口压力"""

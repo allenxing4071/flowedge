@@ -1,12 +1,14 @@
 """
-入场门卫 — 南哥式四层决策框架。
+入场门卫 — 南哥式四层决策框架 + 30 分钟节点过滤。
 
 核心思路：
   从"评分过线就交易"升级为"位置对 + 环境对 + 行为确认 + 方向对 才交易"。
   四层门卫全部通过才发出入场信号，任何一层不通过则保持 NEUTRAL。
+  30 分钟整点前 5 分钟内不开新仓（做市商变盘高发期）。
 
 四层架构：
-  Layer 1: MarketRegime  — 市场环境分类（trending / ranging / breakout / extreme）
+  Layer 0: TimeFilter     — 30 分钟节点过滤（整点前 5 分钟禁止入场）
+  Layer 1: MarketRegime   — 市场环境分类（trending / ranging / breakout / extreme）
   Layer 2: LocationFilter — 位置过滤（只在关键价位附近交易）
   Layer 3: BehaviorConfirm — 做市商行为确认（吸收/假墙/大单）
   Layer 4: DirectionConfirm — 方向确认（复用 SignalScorer 评分 + 提高门槛）
@@ -22,6 +24,7 @@
 from __future__ import annotations
 
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -87,6 +90,11 @@ class GateConfig:
     min_score: float = 0.30                 # |score| >= 0.30
     min_confidence: float = 0.50            # confidence >= 0.50（比旧值 0.40 更严格）
 
+    # Layer 0: 30 分钟节点过滤
+    time_filter_enabled: bool = True        # 是否启用 30 分钟节点过滤
+    time_filter_minutes_before: int = 5     # 整点前 N 分钟禁止入场
+    time_filter_minutes_after: int = 2      # 整点后 N 分钟禁止入场（等待方向明确）
+
     # 动态止损
     max_stop_loss_pct: float = 2.0          # 最大止损（兜底）
     min_stop_loss_pct: float = 0.3          # 最小止损（防止太紧）
@@ -121,6 +129,15 @@ class EntryGate:
             GateResult
         """
         result = GateResult(passed=False, signal="NEUTRAL", side="NONE")
+
+        # ── Layer 0: 30 分钟节点过滤 ──
+        # 做市商倾向于在 30 分钟整点发动变盘，整点前后不宜开新仓
+        if self.config.time_filter_enabled:
+            time_check = self._check_time_node()
+            if not time_check.passed:
+                result.reject_layer = "TimeFilter"
+                result.reject_reason = time_check.detail
+                return result
 
         # ── Layer 1: 市场环境分类 ──
         result.regime = self._classify_regime(features)
@@ -174,6 +191,52 @@ class EntryGate:
         )
 
         return result
+
+    # ══════════════════════════════════════════
+    # Layer 0: 30 分钟节点过滤
+    # ══════════════════════════════════════════
+
+    def _check_time_node(self) -> LayerResult:
+        """
+        30 分钟节点过滤。
+
+        做市商倾向于在 30 分钟整点（:00 和 :30）发动变盘：
+          - 整点前 5 分钟：做市商在积累筹码/双向挤压，方向不明
+          - 整点后 2 分钟：方向刚确立，等待确认
+
+        加密市场 24 小时运行，此规则全天生效。
+        """
+        import datetime
+        now = datetime.datetime.now(datetime.timezone.utc)
+        minute = now.minute
+        # 距离下一个 30 分钟整点的分钟数
+        minutes_in_half = minute % 30
+        minutes_to_next = 30 - minutes_in_half
+
+        before = self.config.time_filter_minutes_before
+        after = self.config.time_filter_minutes_after
+
+        # 整点前 N 分钟
+        if minutes_to_next <= before:
+            return LayerResult(
+                "time_filter", False,
+                f"30分钟节点前{minutes_to_next}分钟（禁区：前{before}分钟）",
+                {"minutes_to_node": minutes_to_next, "phase": "pre_node"}
+            )
+
+        # 整点后 N 分钟
+        if minutes_in_half < after:
+            return LayerResult(
+                "time_filter", False,
+                f"30分钟节点后{minutes_in_half}分钟（禁区：后{after}分钟）",
+                {"minutes_after_node": minutes_in_half, "phase": "post_node"}
+            )
+
+        return LayerResult(
+            "time_filter", True,
+            f"距下个节点{minutes_to_next}分钟，安全",
+            {"minutes_to_node": minutes_to_next, "phase": "safe"}
+        )
 
     # ══════════════════════════════════════════
     # Layer 1: 市场环境分类

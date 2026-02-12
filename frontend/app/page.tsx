@@ -1,14 +1,16 @@
 /**
- * FlowEdge 交易驾驶舱 — 主页 v3.1
+ * FlowEdge 交易驾驶舱 — 主页 v3.3
  *
- * 布局优化（Google PM 审查后调整）：
+ * 布局：
  *   顶部：Header
  *   第一行：信号分布概览
  *   第二行：信号卡片（内嵌门卫状态）
- *   第三行：持仓 + 余额（真金白银优先）
- *   第四行：纸盘交易成绩单
+ *   第三行：订单流可视化（Tab 切换币种，全宽 Tape + DOM + Footprint）
+ *   第四行：纸盘交易（信号验证）
  *   第五行：质量看板（门卫健康诊断）
  *   折叠区：特征热力图 / 胜率追踪 / 异常告警 / 推送器
+ *
+ * 注：持仓/交易功能由 KKline 承担，FlowEdge 专注信号+订单流分析+纸盘验证。
  */
 
 'use client';
@@ -21,12 +23,14 @@ import FactorBreakdown from '@/components/FactorBreakdown';
 import FeatureHeatmap from '@/components/FeatureHeatmap';
 import AnomalyPanel from '@/components/AnomalyPanel';
 import PerformancePanel from '@/components/PerformancePanel';
-import PositionsPanel from '@/components/PositionsPanel';
 import PusherPanel from '@/components/PusherPanel';
 import PaperTradingPanel from '@/components/PaperTradingPanel';
+import TapePanel from '@/components/TapePanel';
+import DOMHeatmap from '@/components/DOMHeatmap';
+import FootprintPanel from '@/components/FootprintPanel';
+import KlinePanel from '@/components/KlinePanel';
 import QualityBoardPanel from '@/components/QualityBoardPanel';
-import TradeDialog from '@/components/TradeDialog';
-import { useDashboard, useGateStatus, DashboardData, GateStatusMap } from '@/lib/hooks';
+import { useDashboard, useGateStatus, DashboardData, GateStatusMap, SymbolSignal } from '@/lib/hooks';
 import { SafePanel } from '@/components/ErrorBoundary';
 
 // ── 可折叠面板容器 ──
@@ -53,6 +57,95 @@ function CollapsibleSection({
         </span>
       </button>
       {open && <div className="animate-fade-in">{children}</div>}
+    </div>
+  );
+}
+
+// ── 订单流 Tab 切换器 + 三栏面板 ──
+
+function OrderFlowSection({
+  symbolMap,
+}: {
+  symbolMap: Record<string, SymbolSignal>;
+}) {
+  // 按字母排序，保证顺序固定不跳动
+  const symbolNames = Object.keys(symbolMap).sort();
+  const [activeSymbol, setActiveSymbol] = useState<string>('');
+
+  // 初始化 / 防止选中的币种被移除
+  const currentSymbol = symbolNames.includes(activeSymbol) ? activeSymbol : symbolNames[0] || '';
+
+  if (symbolNames.length === 0 || !currentSymbol) return null;
+
+  const currentSignal = symbolMap[currentSymbol];
+
+  return (
+    <div className="space-y-3">
+      {/* 标题 + Tab 切换 */}
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-text-primary">订单流</span>
+          <span className="text-xxs text-text-tertiary">订单流可视化</span>
+        </div>
+
+        {/* 币种 Tab — 用 symbol 名切换，不用索引 */}
+        {symbolNames.length > 1 && (
+          <div className="flex items-center gap-1 bg-surface-2/50 rounded-lg p-0.5">
+            {symbolNames.map((sym) => {
+              const sig = symbolMap[sym];
+              const isActive = sym === currentSymbol;
+              const signalColor = sig.signal.includes('BUY')
+                ? 'text-bull'
+                : sig.signal.includes('SELL')
+                  ? 'text-bear'
+                  : 'text-text-secondary';
+
+              return (
+                <button
+                  key={sym}
+                  onClick={() => setActiveSymbol(sym)}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-all ${
+                    isActive
+                      ? 'bg-surface-1 text-text-primary shadow-sm font-medium'
+                      : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-1/50'
+                  }`}
+                >
+                  <span className="font-mono">{sym.replace('USDT', '')}</span>
+                  {isActive && (
+                    <span className={`ml-1.5 text-xxs ${signalColor}`}>
+                      {currentSignal.score > 0 ? '+' : ''}{(currentSignal.score * 100).toFixed(0)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 订单流布局：2x2 对齐网格（同一行高度一致） */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 lg:gap-3 items-stretch">
+        <div className="h-full">
+          <SafePanel name={`深度盘口 ${currentSymbol}`}>
+            <DOMHeatmap symbol={currentSymbol} key={`dom-${currentSymbol}`} />
+          </SafePanel>
+        </div>
+        <div className="h-full">
+          <SafePanel name={`K线图 ${currentSymbol}`}>
+            <KlinePanel symbol={currentSymbol} key={`kline-${currentSymbol}`} />
+          </SafePanel>
+        </div>
+        <div className="h-full">
+          <SafePanel name={`逐笔成交 ${currentSymbol}`}>
+            <TapePanel symbol={currentSymbol} key={`tape-${currentSymbol}`} />
+          </SafePanel>
+        </div>
+        <div className="h-full">
+          <SafePanel name={`足迹图 ${currentSymbol}`}>
+            <FootprintPanel symbol={currentSymbol} key={`fp-${currentSymbol}`} />
+          </SafePanel>
+        </div>
+      </div>
     </div>
   );
 }
@@ -88,30 +181,20 @@ function ErrorState({ message }: { message: string }) {
 
 function Dashboard({ data, gateStatus }: { data: DashboardData; gateStatus: GateStatusMap | null }) {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  const [tradeTarget, setTradeTarget] = useState<{
-    symbol: string;
-    side: 'LONG' | 'SHORT';
-  } | null>(null);
 
+  // 按字母排序，保证顺序固定不随 score 实时变化而跳动
   const symbols = Object.entries(data.symbols).sort((a, b) => {
-    return Math.abs(b[1].score) - Math.abs(a[1].score);
+    return a[0].localeCompare(b[0]);
   });
 
-  const handleTrade = (symbol: string, side: 'LONG' | 'SHORT') => {
-    const signalData = data.symbols[symbol];
-    if (signalData) {
-      setTradeTarget({ symbol, side });
-    }
-  };
-
   return (
-    <div className="mx-auto max-w-[1920px] px-6 lg:px-8 py-6 space-y-6">
+    <div className="w-full px-3 sm:px-4 lg:px-6 py-3 sm:py-4 space-y-4 sm:space-y-5">
 
       {/* ═══ 第一行：信号分布概览 ═══ */}
       <SignalSummary data={data} />
 
       {/* ═══ 第二行：信号卡片（内嵌门卫状态） ═══ */}
-      <div className={`grid gap-5 ${
+      <div className={`grid gap-3 sm:gap-5 ${
         symbols.length <= 2
           ? 'grid-cols-1 sm:grid-cols-2'
           : 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3'
@@ -123,7 +206,6 @@ function Dashboard({ data, gateStatus }: { data: DashboardData; gateStatus: Gate
               data={signalData}
               gate={gateStatus?.[symbol] || null}
               onClick={setSelectedSymbol}
-              onTrade={handleTrade}
             />
           </SafePanel>
         ))}
@@ -139,23 +221,21 @@ function Dashboard({ data, gateStatus }: { data: DashboardData; gateStatus: Gate
         </SafePanel>
       )}
 
-      {/* ═══ 第三行：持仓 + 余额（真金白银优先） ═══ */}
-      <SafePanel name="持仓面板">
-        <PositionsPanel />
-      </SafePanel>
+      {/* ═══ 第三行：订单流可视化（Tab 切换币种，全宽） ═══ */}
+      <OrderFlowSection symbolMap={data.symbols} />
 
-      {/* ═══ 第四行：纸盘交易成绩单 ═══ */}
+      {/* ═══ 纸盘交易（信号验证） ═══ */}
       <SafePanel name="纸盘交易">
         <PaperTradingPanel />
       </SafePanel>
 
-      {/* ═══ 第五行：质量看板 ═══ */}
+      {/* ═══ 质量看板 ═══ */}
       <SafePanel name="质量看板">
         <QualityBoardPanel />
       </SafePanel>
 
       {/* ═══ 折叠区：次要面板 ═══ */}
-      <div className="space-y-1 border-t border-surface-3/30 pt-4">
+      <div className="space-y-1 border-t border-surface-3/30 pt-3 sm:pt-4">
         <div className="text-xxs text-text-tertiary uppercase tracking-wider mb-2 px-1">
           详细分析
         </div>
@@ -184,20 +264,6 @@ function Dashboard({ data, gateStatus }: { data: DashboardData; gateStatus: Gate
           </SafePanel>
         </CollapsibleSection>
       </div>
-
-      {/* 交易确认对话框 */}
-      {tradeTarget && (
-        <TradeDialog
-          symbol={tradeTarget.symbol}
-          side={tradeTarget.side}
-          score={data.symbols[tradeTarget.symbol]?.score || 0}
-          confidence={data.symbols[tradeTarget.symbol]?.confidence || 0}
-          onClose={() => setTradeTarget(null)}
-          onSuccess={() => {
-            setTradeTarget(null);
-          }}
-        />
-      )}
     </div>
   );
 }

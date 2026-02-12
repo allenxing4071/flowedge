@@ -25,6 +25,14 @@ class WallEvent:
 
 
 @dataclass
+class DepthLevel:
+    """单个价格档位"""
+    price: float
+    qty: float          # 币数量
+    qty_usdt: float     # USDT 金额
+
+
+@dataclass
 class DepthChangeSnapshot:
     """深度变化特征快照"""
     bid_change_rate: float    # 买方深度变化速率（USDT/s）
@@ -34,6 +42,9 @@ class DepthChangeSnapshot:
     depth_imbalance: float    # 深度不平衡 (bid-ask)/(bid+ask) * 100
     wall_events_30s: int      # 30s 内假墙事件数
     recent_walls: list[WallEvent]  # 最近的假墙事件（最多 5 个）
+    # DOM 热力图数据（前 30 档）
+    bid_levels: list[DepthLevel] = None  # type: ignore[assignment]
+    ask_levels: list[DepthLevel] = None  # type: ignore[assignment]
 
 
 class DepthChangeDetector:
@@ -72,6 +83,10 @@ class DepthChangeDetector:
         self._cur_bid_depth = 0.0
         self._cur_ask_depth = 0.0
 
+        # DOM 热力图原始数据（保留前 30 档）
+        self._raw_bids: list[list[float]] = []
+        self._raw_asks: list[list[float]] = []
+
     def on_depth_update(
         self,
         bids: list[list[float]],
@@ -98,6 +113,10 @@ class DepthChangeDetector:
         self._prev_ts = timestamp_ms
         self._cur_bid_depth = bid_depth
         self._cur_ask_depth = ask_depth
+
+        # 保存原始档位数据供 DOM 热力图使用
+        self._raw_bids = bids[:30]
+        self._raw_asks = asks[:30]
 
         # 大挂单追踪
         current_walls: set[tuple[str, float]] = set()
@@ -147,6 +166,15 @@ class DepthChangeDetector:
         total = self._cur_bid_depth + self._cur_ask_depth
         imbalance = ((self._cur_bid_depth - self._cur_ask_depth) / total * 100) if total > 0 else 0
 
+        bid_levels = [
+            DepthLevel(price=p, qty=q, qty_usdt=round(p * q, 2))
+            for p, q in self._raw_bids
+        ]
+        ask_levels = [
+            DepthLevel(price=p, qty=q, qty_usdt=round(p * q, 2))
+            for p, q in self._raw_asks
+        ]
+
         return DepthChangeSnapshot(
             bid_change_rate=round(self._bid_change_rate, 2),
             ask_change_rate=round(self._ask_change_rate, 2),
@@ -155,4 +183,6 @@ class DepthChangeDetector:
             depth_imbalance=round(imbalance, 2),
             wall_events_30s=len(self._wall_events),
             recent_walls=list(self._wall_events)[-5:],
+            bid_levels=bid_levels,
+            ask_levels=ask_levels,
         )

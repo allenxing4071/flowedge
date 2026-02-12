@@ -36,7 +36,7 @@ export default function TradeDialog({
   const isBull = side === 'LONG';
   const colorClass = isBull ? 'text-bull' : 'text-bear';
   const bgClass = isBull ? 'bg-bull' : 'bg-bear';
-  const sideLabel = isBull ? '做多 LONG' : '做空 SHORT';
+  const sideLabel = isBull ? '做多（多头）' : '做空（空头）';
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -163,9 +163,9 @@ export default function TradeDialog({
                 className="w-full accent-info"
               />
               <div className="flex justify-between text-xs text-text-tertiary mt-1">
-                <span>1x</span>
-                <span>10x</span>
-                <span>20x</span>
+                <span>1倍</span>
+                <span>10倍</span>
+                <span>20倍</span>
               </div>
             </div>
 

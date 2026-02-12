@@ -167,6 +167,17 @@ export function riskColor(level: string): string {
   }
 }
 
+export function riskLabel(level: string): string {
+  switch (level) {
+    case 'EXTREME': return '极高';
+    case 'HIGH': return '高';
+    case 'ELEVATED': return '偏高';
+    case 'LOW': return '低';
+    case 'MEDIUM': return '中';
+    default: return level || '--';
+  }
+}
+
 export function signalLabel(signal: string): string {
   switch (signal) {
     case 'STRONG_BUY': return '强烈看多';
@@ -181,6 +192,16 @@ export function signalLabel(signal: string): string {
 export function formatScore(score: number): string {
   const sign = score > 0 ? '+' : '';
   return `${sign}${(score * 100).toFixed(1)}`;
+}
+
+export function sideLabel(side: string): string {
+  switch (side) {
+    case 'LONG': return '多头';
+    case 'SHORT': return '空头';
+    case 'BUY': return '买入';
+    case 'SELL': return '卖出';
+    default: return side || '--';
+  }
 }
 
 export function formatTimestamp(ms: number): string {

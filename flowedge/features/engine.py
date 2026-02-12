@@ -1,6 +1,6 @@
 """
-FeatureEngine — 特征引擎聚合层 v2.1
-持有所有 14 个特征计算器，提供统一的快照输出和 SSE 订阅接口。
+FeatureEngine — 特征引擎聚合层 v3.0
+持有所有 17 个特征计算器，提供统一的快照输出和 SSE 订阅接口。
 
 完整数据流架构（Phase 2 — 全量数据基建）：
 
@@ -17,12 +17,13 @@ FeatureEngine — 特征引擎聚合层 v2.1
   Coinglass    → 全网OI分交易所, 全网清算, ETF资金流向
   外部         → 恐慌贪婪指数, Coinalyze全网聚合
 
-特征计算器（14 个）：
+特征计算器（17 个）：
   1. CVD           2. OFI           3. VPIN
   4. LargeTrade    5. DepthChange   6. FundingRate
   7. Liquidation   8. OI            9. Sentiment
   10. Trend        11. BookImbalance（内嵌）
   12. VWAP         13. VolumeProfile 14. Absorption
+  15. Tape（逐笔缓冲）  16. Footprint（价位分桶）  17. IcebergDetector（冰山单推量）
 """
 
 from __future__ import annotations
@@ -55,14 +56,17 @@ from .trend import TrendTracker
 from .vwap import VWAPCalculator
 from .volume_profile import VolumeProfileCalculator
 from .absorption import AbsorptionDetector
+from .tape_buffer import TapeBuffer
+from .footprint import FootprintAggregator
+from .iceberg_detector import IcebergDetector
 
 logger = logging.getLogger("feature.engine")
 
 
 class FeatureEngine:
     """
-    特征引擎 v2.1：14 个特征计算器 × N 个币种。
-    新增做市商逻辑因子：VWAP / Volume Profile / 吸收检测。
+    特征引擎 v3.0：17 个特征计算器 × N 个币种。
+    新增可视化数据层：Tape / Footprint / 冰山单检测。
     """
 
     def __init__(self):
@@ -83,6 +87,11 @@ class FeatureEngine:
         self._volume_profile: dict = {}
         self._absorption: dict = {}
 
+        # ── 可视化数据层（Tape / Footprint / 冰山单） ──
+        self._tape: dict = {}
+        self._footprint: dict = {}
+        self._iceberg: dict = {}
+
         # 最新 book ticker
         self._book_ticks: dict = {}
 
@@ -99,7 +108,7 @@ class FeatureEngine:
         self._init_calculators()
 
     def _init_calculators(self) -> None:
-        """为每个监控币种初始化 11 个特征计算器"""
+        """为每个监控币种初始化 17 个特征计算器"""
         for symbol in self._symbols:
             self._cvd[symbol] = CVDCalculator()
             self._ofi[symbol] = OFICalculator()
@@ -119,9 +128,17 @@ class FeatureEngine:
             self._vwap[symbol] = VWAPCalculator()
             self._volume_profile[symbol] = VolumeProfileCalculator()
             self._absorption[symbol] = AbsorptionDetector()
+            # 可视化数据层
+            self._tape[symbol] = TapeBuffer(
+                large_threshold_usdt=cfg.LARGE_TRADE_THRESHOLD,
+            )
+            self._footprint[symbol] = FootprintAggregator()
+            self._iceberg[symbol] = IcebergDetector(
+                large_threshold_usdt=cfg.LARGE_TRADE_THRESHOLD,
+            )
 
         logger.info(
-            f"[FeatureEngine] 已初始化 {len(self._symbols)} 个币种 × 14 特征: {self._symbols}"
+            f"[FeatureEngine] 已初始化 {len(self._symbols)} 个币种 × 17 特征: {self._symbols}"
         )
 
     # ══════════════════════════════════════════
@@ -132,7 +149,7 @@ class FeatureEngine:
         self._counts["agg_trade"] += 1
         if symbol not in self._cvd:
             return
-        self._cvd[symbol].on_trade(trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms)
+        self._cvd[symbol].on_trade(trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms, trade.price)
         self._vpin[symbol].on_trade(trade.qty_usdt, trade.is_taker_buy)
         large_event = self._large[symbol].on_trade(
             trade.price, trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms
@@ -142,12 +159,28 @@ class FeatureEngine:
                 f"[大单] {symbol} {'买' if large_event.is_taker_buy else '卖'} "
                 f"${large_event.qty_usdt:,.0f} @ {trade.price}"
             )
-        # 新增三因子：VWAP / Volume Profile / 吸收检测
+        # VWAP / Volume Profile / 吸收检测
         self._vwap[symbol].on_trade(trade.price, trade.qty_usdt, trade.timestamp_ms)
         self._volume_profile[symbol].on_trade(trade.price, trade.qty_usdt, trade.timestamp_ms)
         self._absorption[symbol].on_trade(
             trade.price, trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms
         )
+        # 可视化数据层：Tape / Footprint / 冰山单
+        self._tape[symbol].on_trade(
+            trade.price, trade.qty, trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms
+        )
+        self._footprint[symbol].on_trade(
+            trade.price, trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms
+        )
+        iceberg = self._iceberg[symbol].on_trade(
+            trade.price, trade.qty_usdt, trade.is_taker_buy, trade.timestamp_ms
+        )
+        if iceberg:
+            logger.info(
+                f"[冰山单] {symbol} {'买' if iceberg.is_taker_buy else '卖'} "
+                f"${iceberg.total_qty_usdt:,.0f} ({iceberg.trade_count}笔 {iceberg.pattern}) "
+                f"置信度 {iceberg.confidence:.0%}"
+            )
 
     async def on_depth_update(self, symbol: str, snapshot: OrderBookSnapshot) -> None:
         self._counts["depth"] += 1
@@ -311,21 +344,140 @@ class FeatureEngine:
             features["volume_profile"] = asdict(self._volume_profile[sym].snapshot())
             # 14. 吸收检测
             features["absorption"] = asdict(self._absorption[sym].snapshot())
+            # 15. 冰山单检测（轻量摘要，不含完整 trades）
+            ice_snap = self._iceberg[sym].snapshot()
+            features["iceberg"] = {
+                "buy_hidden_usdt": ice_snap.buy_hidden_usdt,
+                "sell_hidden_usdt": ice_snap.sell_hidden_usdt,
+                "net_hidden_usdt": ice_snap.net_hidden_usdt,
+                "cluster_count_60s": ice_snap.cluster_count_60s,
+                "active_count": len(ice_snap.active_clusters),
+            }
 
             result[sym] = features
 
         return result
+
+    # ══════════════════════════════════════════
+    # 可视化数据端点（Tape / DOM / Footprint）
+    # ══════════════════════════════════════════
+
+    def get_tape(self, symbol: str) -> dict | None:
+        """获取 Tape 逐笔成交数据"""
+        buf = self._tape.get(symbol)
+        if not buf:
+            return None
+        snap = buf.snapshot()
+        return {
+            "trades": snap.trades,
+            "stats_10s": snap.stats_10s,
+            "stats_60s": snap.stats_60s,
+        }
+
+    def get_dom(self, symbol: str) -> dict | None:
+        """获取 DOM（订单簿深度）热力图数据"""
+        dc = self._depth_change.get(symbol)
+        tick = self._book_ticks.get(symbol)
+        if not dc or not tick:
+            return None
+
+        snap = dc.snapshot()
+        bids = [
+            {"price": lv.price, "qty": lv.qty, "usdt": lv.qty_usdt}
+            for lv in (snap.bid_levels or [])
+        ]
+        asks = [
+            {"price": lv.price, "qty": lv.qty, "usdt": lv.qty_usdt}
+            for lv in (snap.ask_levels or [])
+        ]
+        return {
+            "bid_price": tick.bid_price,
+            "ask_price": tick.ask_price,
+            "mid_price": tick.mid_price,
+            "spread_pct": tick.spread_pct,
+            "bid_depth_usdt": snap.bid_depth_usdt,
+            "ask_depth_usdt": snap.ask_depth_usdt,
+            "imbalance": snap.depth_imbalance,
+            "bids": bids,
+            "asks": asks,
+            "wall_events": snap.wall_events_30s,
+            "fake_walls": [asdict(w) for w in snap.recent_walls],
+        }
+
+    def get_footprint(self, symbol: str) -> dict | None:
+        """获取 Footprint Chart 数据"""
+        fp = self._footprint.get(symbol)
+        if not fp:
+            return None
+        snap = fp.snapshot()
+        return {
+            "current_bar": snap.current_bar,
+            "recent_bars": snap.recent_bars,
+            "tick_size": snap.tick_size,
+        }
+
+    def get_iceberg(self, symbol: str) -> dict | None:
+        """获取冰山单检测完整数据"""
+        det = self._iceberg.get(symbol)
+        if not det:
+            return None
+        snap = det.snapshot()
+        return {
+            "active_clusters": [
+                {
+                    "start_ms": c.start_ms,
+                    "end_ms": c.end_ms,
+                    "price_avg": c.price_avg,
+                    "total_qty_usdt": c.total_qty_usdt,
+                    "trade_count": c.trade_count,
+                    "side": "BUY" if c.is_taker_buy else "SELL",
+                    "pattern": c.pattern,
+                    "confidence": c.confidence,
+                }
+                for c in snap.active_clusters
+            ],
+            "recent_clusters": [
+                {
+                    "start_ms": c.start_ms,
+                    "end_ms": c.end_ms,
+                    "price_avg": c.price_avg,
+                    "total_qty_usdt": c.total_qty_usdt,
+                    "trade_count": c.trade_count,
+                    "side": "BUY" if c.is_taker_buy else "SELL",
+                    "pattern": c.pattern,
+                    "confidence": c.confidence,
+                }
+                for c in snap.recent_clusters
+            ],
+            "buy_hidden_usdt": snap.buy_hidden_usdt,
+            "sell_hidden_usdt": snap.sell_hidden_usdt,
+            "net_hidden_usdt": snap.net_hidden_usdt,
+            "cluster_count_60s": snap.cluster_count_60s,
+        }
+
+    def get_orderflow_snapshot(self, symbol: str) -> dict | None:
+        """获取完整的订单流可视化数据（Tape + DOM + Footprint + 冰山单）"""
+        symbol = symbol.upper()
+        if symbol not in self._cvd:
+            return None
+        return {
+            "symbol": symbol,
+            "timestamp": int(time.time() * 1000),
+            "tape": self.get_tape(symbol),
+            "footprint": self.get_footprint(symbol),
+            "iceberg": self.get_iceberg(symbol),
+        }
 
     def get_status(self) -> dict:
         """系统状态"""
         uptime = time.time() - self._start_time
         total = sum(self._counts.values())
         return {
-            "version": "2.0",
+            "version": "3.0",
             "uptime_s": round(uptime, 1),
             "symbols": self._symbols,
             "symbol_count": len(self._symbols),
-            "feature_count": 14,
+            "feature_count": 17,
             "feeds": dict(self._counts),
             "total_messages": total,
             "msg_rate_approx": round(total / max(uptime, 1), 1),

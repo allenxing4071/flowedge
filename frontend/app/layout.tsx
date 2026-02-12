@@ -7,7 +7,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'FlowEdge Cockpit',
+  title: 'FlowEdge 交易驾驶舱',
   description: '订单流驱动的量化交易驾驶舱',
 };
 

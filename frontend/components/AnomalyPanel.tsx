@@ -48,6 +48,13 @@ const SEVERITY_STYLE: Record<string, { bg: string; border: string; text: string 
   },
 };
 
+const SEVERITY_LABEL: Record<string, string> = {
+  CRITICAL: '严重',
+  HIGH: '高',
+  MEDIUM: '中',
+  LOW: '低',
+};
+
 export default function AnomalyPanel() {
   const [anomalies, setAnomalies] = useState<(AnomalyEvent & { symbol: string })[]>([]);
 
@@ -105,7 +112,7 @@ export default function AnomalyPanel() {
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2.5">
                     <span className={`text-xs font-bold mono-num ${style.text}`}>
-                      {a.severity}
+                      {SEVERITY_LABEL[a.severity] || a.severity}
                     </span>
                     <span className="text-sm font-semibold text-text-primary">
                       {a.symbol}

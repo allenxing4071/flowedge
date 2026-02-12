@@ -1,6 +1,6 @@
 """
 depth@100ms WebSocket 流处理器
-接入币安订单簿增量更新，本地维护完整 20 档快照，分发给特征引擎。
+接入币安订单簿增量更新，本地维护完整 30 档快照，分发给特征引擎。
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ REST_BASE = "https://fapi.binance.com"
 
 @dataclass
 class OrderBookSnapshot:
-    """20 档订单簿快照"""
+    """30 档订单簿快照"""
     timestamp_ms: int
     bids: list[list[float]]    # [[price, qty], ...] 价格从高到低
     asks: list[list[float]]    # [[price, qty], ...] 价格从低到高
@@ -41,7 +41,7 @@ class DepthStream:
     使用增量更新 + REST 快照初始化，维护本地完整订单簿。
     """
 
-    def __init__(self, symbols: list[str], on_update: OnDepthUpdate, depth_limit: int = 20):
+    def __init__(self, symbols: list[str], on_update: OnDepthUpdate, depth_limit: int = 30):
         self._symbols = [s.lower() for s in symbols]
         self._on_update = on_update
         self._depth_limit = depth_limit

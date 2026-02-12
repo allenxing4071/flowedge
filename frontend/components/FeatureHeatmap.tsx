@@ -71,65 +71,71 @@ export default function FeatureHeatmap() {
   }
 
   return (
-    <div className="card p-6 overflow-x-auto">
-      <div className="text-sm text-text-secondary font-medium mb-4">
-        特征热力图 — 因子 × 币种
+    <div className="card p-3 sm:p-6">
+      <div className="text-xs sm:text-sm text-text-secondary font-medium mb-2 sm:mb-4">
+        特征热力图
       </div>
 
-      <table className="w-full text-center">
-        <thead>
-          <tr>
-            <th className="text-sm text-text-tertiary font-medium px-4 py-3 text-left sticky left-0 bg-surface-1 z-10">
-              币种
-            </th>
-            {FACTOR_ORDER.map(name => (
-              <th key={name} className="text-xs text-text-tertiary font-medium px-2 py-3">
-                {FACTOR_SHORT[name]}
+      {/* 手机端滚动提示 */}
+      <div className="sm:hidden text-xxs text-text-tertiary mb-1.5 flex items-center gap-1">
+        <span>←</span> 左右滑动查看
+      </div>
+
+      <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
+        <table className="w-full text-center" style={{ minWidth: '600px' }}>
+          <thead>
+            <tr>
+              <th className="text-xxs sm:text-sm text-text-tertiary font-medium px-2 sm:px-4 py-2 sm:py-3 text-left sticky left-0 bg-surface-1 z-10">
+                币种
               </th>
-            ))}
-            <th className="text-sm text-text-tertiary font-medium px-4 py-3">
-              综合
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {symbols.map(symbol => {
-            const detail = allSignals[symbol];
-            if (!detail || !detail.factors) return null;
+              {FACTOR_ORDER.map(name => (
+                <th key={name} className="text-xxs sm:text-xs text-text-tertiary font-medium px-0.5 sm:px-2 py-2 sm:py-3">
+                  {FACTOR_SHORT[name]}
+                </th>
+              ))}
+              <th className="text-xxs sm:text-sm text-text-tertiary font-medium px-1 sm:px-4 py-2 sm:py-3">
+                合
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {symbols.map(symbol => {
+              const detail = allSignals[symbol];
+              if (!detail || !detail.factors) return null;
 
-            // 按 FACTOR_ORDER 排序
-            const factorMap: Record<string, FactorDetail> = {};
-            detail.factors.forEach(f => { factorMap[f.name] = f; });
+              const factorMap: Record<string, FactorDetail> = {};
+              detail.factors.forEach(f => { factorMap[f.name] = f; });
 
-            return (
-              <tr key={symbol} className="border-t border-surface-3/20 hover:bg-surface-2/50 transition-colors">
-                <td className="text-sm font-semibold px-4 py-3 text-left sticky left-0 bg-surface-1 z-10">
-                  {symbol}
-                </td>
-                {FACTOR_ORDER.map(name => {
-                  const f = factorMap[name];
-                  const score = f?.score || 0;
-                  return (
-                    <td key={name} className="px-1.5 py-2">
-                      <div
-                        className={`rounded-md px-2 py-1.5 mono-num text-sm font-semibold transition-colors ${scoreToColor(score)}`}
-                        title={f?.reason || ''}
-                      >
-                        {score > 0 ? '+' : ''}{(score * 100).toFixed(0)}
-                      </div>
-                    </td>
-                  );
-                })}
-                <td className="px-2 py-2">
-                  <div className={`rounded-md px-3 py-1.5 mono-num text-base font-bold transition-colors ${scoreToColor(detail.score)}`}>
-                    {detail.score > 0 ? '+' : ''}{(detail.score * 100).toFixed(0)}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+              return (
+                <tr key={symbol} className="border-t border-surface-3/20 hover:bg-surface-2/50 transition-colors">
+                  <td className="text-xxs sm:text-sm font-semibold px-2 sm:px-4 py-1.5 sm:py-3 text-left sticky left-0 bg-surface-1 z-10">
+                    {symbol.replace('USDT', '')}
+                  </td>
+                  {FACTOR_ORDER.map(name => {
+                    const f = factorMap[name];
+                    const score = f?.score || 0;
+                    return (
+                      <td key={name} className="px-0.5 sm:px-1.5 py-1 sm:py-2">
+                        <div
+                          className={`rounded px-1 sm:px-2 py-0.5 sm:py-1.5 mono-num text-xxs sm:text-sm font-semibold transition-colors ${scoreToColor(score)}`}
+                          title={f?.reason || ''}
+                        >
+                          {score > 0 ? '+' : ''}{(score * 100).toFixed(0)}
+                        </div>
+                      </td>
+                    );
+                  })}
+                  <td className="px-1 sm:px-2 py-1 sm:py-2">
+                    <div className={`rounded px-1.5 sm:px-3 py-0.5 sm:py-1.5 mono-num text-xs sm:text-base font-bold transition-colors ${scoreToColor(detail.score)}`}>
+                      {detail.score > 0 ? '+' : ''}{(detail.score * 100).toFixed(0)}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
