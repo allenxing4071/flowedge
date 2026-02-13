@@ -20,9 +20,6 @@ logger = logging.getLogger("feed.market_data")
 BINANCE_REST = "https://fapi.binance.com"
 COINGLASS_V4_URL = "https://open-api-v4.coinglass.com/api"
 
-POLL_INTERVAL = 300   # 5 分钟
-COINGLASS_INTERVAL = 300
-
 
 @dataclass
 class OIData:
@@ -83,7 +80,7 @@ class MarketDataCollector:
                 await self._collect_all()
             except Exception as e:
                 logger.error(f"[MarketData] 采集异常: {e}")
-            await asyncio.sleep(POLL_INTERVAL)
+            await asyncio.sleep(cfg.REST_POLL_INTERVAL_S)
 
     async def _collect_all(self) -> None:
         """一次采集所有数据"""

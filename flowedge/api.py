@@ -57,10 +57,10 @@ _tasks: list = []
 async def _data_sync_loop():
     """
     定期将 REST 采集器缓存同步到 FeatureEngine。
-    每 10 秒检查一次，确保中频数据及时注入特征引擎。
+    间隔由 cfg.DATA_SYNC_LOOP_S 控制（高频模式 5s，默认 10s）。
     """
     while True:
-        await asyncio.sleep(10)
+        await asyncio.sleep(cfg.DATA_SYNC_LOOP_S)
         for symbol in cfg.WATCH_SYMBOLS:
             # 币安 REST 全量数据
             rest = binance_rest.get(symbol)
@@ -115,19 +115,21 @@ async def lifespan(app: FastAPI):
     _tasks.append(asyncio.create_task(market_data.run()))
     _tasks.append(asyncio.create_task(external_data.run()))
 
-    # ── 数据同步 + SSE 广播 + 信号评估 ──
+    # ── 数据同步 + SSE 广播 + 信号评估（间隔由 cfg 控制，高频模式更短） ──
     _tasks.append(asyncio.create_task(_data_sync_loop()))
-    _tasks.append(asyncio.create_task(engine.broadcast_loop(interval_ms=200)))
     _tasks.append(asyncio.create_task(
-        signal_engine.evaluation_loop(engine, interval_ms=1000)
+        engine.broadcast_loop(interval_ms=cfg.BROADCAST_INTERVAL_MS)
     ))
     _tasks.append(asyncio.create_task(
-        signal_engine.tracker.tracking_loop(interval_s=30)
+        signal_engine.evaluation_loop(engine, interval_ms=cfg.SIGNAL_EVAL_INTERVAL_MS)
+    ))
+    _tasks.append(asyncio.create_task(
+        signal_engine.tracker.tracking_loop(interval_s=cfg.TRACKER_LOOP_S)
     ))
 
     # ── 纸盘交易：注入引擎 + 启动资金曲线录制 ──
     signal_engine.paper_trader = paper_trader
-    _tasks.append(asyncio.create_task(paper_trader.equity_loop(interval_s=60)))
+    _tasks.append(asyncio.create_task(paper_trader.equity_loop(interval_s=cfg.EQUITY_LOOP_S)))
 
     # 数据源状态摘要
     sources = []
@@ -139,11 +141,18 @@ async def lifespan(app: FastAPI):
         sources.append("Coinalyze")
     sources.append("FearGreed")
 
+    mode_note = ""
+    if cfg.NANGE_MODE:
+        mode_note = " | 南哥打法(高频+跟随+判断方向)"
+    if cfg.GATE_SKIP_BEHAVIOR_LAYER:
+        mode_note += " L3跳过"
     logger.info(
         f"[FlowEdge v3.0] 已启动 — "
         f"{' + '.join(sources)} | "
         f"监控 {cfg.WATCH_SYMBOLS} | "
         f"17 特征计算器 + 信号引擎 + 订单流可视化"
+        + (f" | 高频模式(broadcast={cfg.BROADCAST_INTERVAL_MS}ms eval={cfg.SIGNAL_EVAL_INTERVAL_MS}ms)" if cfg.HIGH_FREQ_MODE else "")
+        + mode_note
     )
 
     yield

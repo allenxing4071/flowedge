@@ -11,6 +11,7 @@
 #   ./scripts/deploy-flowedge.sh cx      # 云服务器快速重启 (不重建镜像)
 #   ./scripts/deploy-flowedge.sh cs      # 查看云服务器状态
 #   ./scripts/deploy-flowedge.sh cl      # 查看云服务器日志
+#   ./scripts/deploy-flowedge.sh sh      # SSH 登录服务器（交互式）
 #
 # 🏠 本地命令:
 #   ./scripts/deploy-flowedge.sh start   # 本地 Docker 启动
@@ -468,6 +469,20 @@ cloud_deploy() {
 }
 
 # ============================================================================
+# 云服务器: SSH 登录（交互式连接到服务器）
+# ============================================================================
+cloud_shell() {
+    echo ""
+    echo -e "${CYAN}════════════════════ 连接服务器 ════════════════════${NC}"
+    echo -e "  主机: ${GREEN}$CLOUD_SERVER_USER@$CLOUD_SERVER_IP${NC} 端口: ${GREEN}$CLOUD_SSH_PORT${NC}"
+    echo -e "  项目路径: ${GREEN}$CLOUD_PROJECT_PATH${NC}"
+    echo -e "  退出后输入 ${YELLOW}exit${NC}"
+    echo ""
+    ssh -i "$CLOUD_SSH_KEY" -p "$CLOUD_SSH_PORT" -o StrictHostKeyChecking=no \
+        "$CLOUD_SERVER_USER@$CLOUD_SERVER_IP"
+}
+
+# ============================================================================
 # 云服务器: 查看状态
 # ============================================================================
 cloud_status() {
@@ -597,6 +612,7 @@ show_help() {
     echo -e "    ${GREEN}cx${NC}     快速重启 (不重建镜像)"
     echo -e "    ${GREEN}cs${NC}     查看云服务器状态"
     echo -e "    ${GREEN}cl${NC}     查看云服务器日志"
+    echo -e "    ${GREEN}sh${NC}     SSH 登录服务器（交互式）"
     echo -e "    ${GREEN}sync${NC}   仅同步代码 (不重建)"
     echo -e "    ${GREEN}backup${NC} 备份服务器数据到本地"
     echo -e "    ${GREEN}i${NC}      首次初始化"
@@ -616,6 +632,7 @@ case "${1:-}" in
     cx)     cloud_restart ;;
     cs)     cloud_status ;;
     cl)     cloud_logs ;;
+    sh)     cloud_shell ;;
     sync)   cloud_sync ;;
     backup) cloud_ssh_connect && cloud_backup_data ;;
     i)      cloud_init ;;

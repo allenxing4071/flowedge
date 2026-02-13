@@ -28,10 +28,8 @@ COINALYZE_BASE = "https://api.coinalyze.net/v1"
 COINGLASS_V3 = "https://open-api-v3.coinglass.com/api"
 COINGLASS_V4 = "https://open-api-v4.coinglass.com/api"
 
-# 采集间隔
-FNG_INTERVAL = 300          # 恐慌贪婪：5 分钟
-COINALYZE_INTERVAL = 300    # Coinalyze：5 分钟
-COINGLASS_ETF_INTERVAL = 3600  # ETF 流向：1 小时
+# 采集间隔由 cfg.REST_POLL_INTERVAL_S / cfg.EXTERNAL_CHECK_S 控制（高频模式更短）
+COINGLASS_ETF_INTERVAL = 3600  # ETF 流向：1 小时（固定，避免超限）
 
 
 @dataclass
@@ -116,13 +114,13 @@ class ExternalDataCollector:
                 tasks = []
 
                 # 恐慌贪婪指数
-                if now - self._last_fng_time >= FNG_INTERVAL:
+                if now - self._last_fng_time >= cfg.REST_POLL_INTERVAL_S:
                     tasks.append(self._collect_fng(now))
 
                 # Coinalyze（按币种）
                 for symbol in cfg.WATCH_SYMBOLS:
                     last = self._last_coinalyze_time.get(symbol, 0.0)
-                    if now - last >= COINALYZE_INTERVAL:
+                    if now - last >= cfg.REST_POLL_INTERVAL_S:
                         tasks.append(self._collect_coinalyze(now, symbol))
 
                 # Coinglass ETF
@@ -135,7 +133,7 @@ class ExternalDataCollector:
             except Exception as e:
                 logger.error(f"[External] 采集异常: {e}")
 
-            await asyncio.sleep(60)  # 每分钟检查一次是否有数据到期
+            await asyncio.sleep(cfg.EXTERNAL_CHECK_S)  # 检查周期（高频模式 30s，默认 60s）
 
     # ── 恐慌贪婪指数 ──
 

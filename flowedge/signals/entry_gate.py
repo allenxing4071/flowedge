@@ -6,11 +6,11 @@
   四层门卫全部通过才发出入场信号，任何一层不通过则保持 NEUTRAL。
   30 分钟整点前 5 分钟内不开新仓（做市商变盘高发期）。
 
-四层架构：
+四层架构（南哥打法 = 四层全做；skip_behavior_layer 仅临时“先开单”调试用）：
   Layer 0: TimeFilter     — 30 分钟节点过滤（整点前 5 分钟禁止入场）
   Layer 1: MarketRegime   — 市场环境分类（trending / ranging / breakout / extreme）
   Layer 2: LocationFilter — 位置过滤（只在关键价位附近交易）
-  Layer 3: BehaviorConfirm — 做市商行为确认（吸收/假墙/大单）
+  Layer 3: BehaviorConfirm — 做市商行为确认（吸收/假墙/大单）；skip_behavior_layer=True 时跳过
   Layer 4: DirectionConfirm — 方向确认（复用 SignalScorer 评分 + 提高门槛）
 
 数据流：
@@ -19,6 +19,11 @@
   EntryGate.evaluate(features, composite_signal)
        ↓
   GateResult（通过/拒绝 + 各层详情）
+
+「跟对做市商」判断逻辑（当前实现）：
+  - 方向来源：L2 LocationFilter 给出 suggested_side（价值区边界、VWAP 带、突破方向等），即「跟谁」的决策依据
+  - L4 DirectionConfirm：只做「确认不反对」— 要求 score 方向、CVD/OFI 方向与 suggested_side 一致，否则拒绝；不独立判断方向
+  - 准不准：取决于 L2 位置条件（VWAP/POC/VA 阈值等）是否贴近真实做市商行为；无实时「跟对/跟错」信号，事后用纸盘平仓盈亏统计（多单 exit>entry、空单 exit<entry 为跟对）
 """
 
 from __future__ import annotations
@@ -95,6 +100,9 @@ class GateConfig:
     time_filter_minutes_before: int = 5     # 整点前 N 分钟禁止入场
     time_filter_minutes_after: int = 2      # 整点后 N 分钟禁止入场（等待方向明确）
 
+    # 南哥打法：先开单再缩紧时跳过 L3（吸收/假墙/大单），仅用 L1/L2/L4 跟随+判断方向
+    skip_behavior_layer: bool = False
+
     # 动态止损
     max_stop_loss_pct: float = 2.0          # 最大止损（兜底）
     min_stop_loss_pct: float = 0.3          # 最小止损（防止太紧）
@@ -157,12 +165,19 @@ class EntryGate:
 
         suggested_side = result.location.data.get("suggested_side", "NONE")
 
-        # ── Layer 3: 做市商行为确认 ──
-        result.behavior = self._confirm_behavior(features, suggested_side)
-        if not result.behavior.passed:
-            result.reject_layer = "behavior"
-            result.reject_reason = result.behavior.detail
-            return result
+        # ── Layer 3: 做市商行为确认（南哥打法可跳过，仅用 L1/L2/L4 跟随+判断方向） ──
+        if self.config.skip_behavior_layer:
+            result.behavior = LayerResult(
+                "behavior", True,
+                "南哥打法: 跳过行为层(先开单)",
+                {"skip": True}
+            )
+        else:
+            result.behavior = self._confirm_behavior(features, suggested_side)
+            if not result.behavior.passed:
+                result.reject_layer = "behavior"
+                result.reject_reason = result.behavior.detail
+                return result
 
         # ── Layer 4: 方向确认 ──
         result.direction = self._confirm_direction(features, signal, suggested_side)

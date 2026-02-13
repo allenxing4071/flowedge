@@ -614,7 +614,7 @@ export default function PaperTradingPanel() {
         <MetricCard
           label="总收益"
           value={hasTrades ? safePct(rp) : '0.00%'}
-          sub={hasTrades ? safeDollar(stats?.total_net_pnl) : undefined}
+          sub={hasTrades ? `${safeDollar((account?.equity ?? 0) - (account?.initial_balance ?? 10000))} = 已平仓${safeDollar(stats?.total_net_pnl)} + 未实现${safeDollar(account?.unrealized_pnl)}` : undefined}
           color={returnColor}
           large
         />
@@ -683,7 +683,7 @@ export default function PaperTradingPanel() {
               onClick={() => setShowTrades(!showTrades)}
               className="flex items-center justify-between w-full text-xxs font-medium text-text-tertiary uppercase tracking-wider py-2 hover:text-text-secondary transition-colors"
             >
-              <span>交易记录 {hasTrades && `(${stats.total_trades} 笔)`}</span>
+              <span>交易记录 {hasTrades && `(共 ${stats.total_trades} 笔，已平仓合计 ${safeDollar(stats?.total_net_pnl)})`}</span>
               <span className="text-xs">{showTrades ? '▲' : '▼'}</span>
             </button>
             {showTrades && allTrades.length > 0 && (

@@ -16,6 +16,15 @@
 数据流：
   SignalEngine.evaluate() → 信号变化 → PaperTrader.on_signal_change()
   MarkPrice 实时更新 → PaperTrader.on_price_update() → 止损/止盈检测
+
+平仓逻辑（错了马上出、对了拿住）：
+  - NEUTRAL 时：浮盈 > 0 视为跟对 → 不平仓，等止盈/追踪止盈；浮亏或未知 → 最短 min_hold_wrong_s 后平（signal_neutral_wrong）
+  - 反转信号：仍用 min_hold*0.4 保护后平；价格层：止损/固定止盈/追踪止盈照常
+
+「跟对做市商」定义（事后度量）：
+  - 开仓方向来自门卫 L2 suggested_side（价值区/VWAP/突破等），非 scorer 的 score 方向
+  - 跟对：多单且 exit_price > entry_price，或空单且 exit_price < entry_price；跟错：反之
+  - 代码内无实时的「当前这笔跟没跟对」判断，仅平仓后用交易记录 net_pnl / 价格方向统计
 """
 
 from __future__ import annotations
@@ -30,6 +39,8 @@ from pathlib import Path
 from typing import Optional
 
 import aiohttp
+
+from .config import cfg
 
 logger = logging.getLogger("flowedge.paper")
 
@@ -111,7 +122,8 @@ class PaperConfig:
     slippage_pct: float = 0.02           # 模拟滑点 %（BTC/ETH 主流币实际约 0.01-0.02%）
     fee_pct: float = 0.02               # 单边手续费 %（币安 maker 0.02%，保守取 0.02%）
     cooldown_s: float = 120.0            # 开仓冷却期（秒），防止 whipsaw 连续反转
-    min_hold_s: float = 300.0            # 最低持仓时间（秒），NEUTRAL 不立即平仓
+    min_hold_s: float = 300.0            # 最低持仓时间（秒），NEUTRAL 且「对了」时拿住用
+    min_hold_wrong_s: float = 15.0      # 「错了马上出」：NEUTRAL 且浮亏时，持仓≥此秒数即可平
     # 触发条件
     min_confidence: float = 0.40         # 最低置信度（过滤低一致性信号）
     min_entry_score: float = 0.30        # 最低入场评分绝对值（只进强信号单）
@@ -150,6 +162,11 @@ class PaperTrader:
 
     def __init__(self, db_path: Optional[Path] = None):
         self.config = PaperConfig()
+        self.config.min_hold_s = cfg.PAPER_MIN_HOLD_S  # 高频模式 120s，默认 300s
+        self.config.min_hold_wrong_s = cfg.PAPER_MIN_HOLD_WRONG_S  # 错了马上出：NEUTRAL 且浮亏时最短 15s
+        self.config.min_confidence = cfg.PAPER_MIN_CONFIDENCE   # 放开 0.15，缩紧时调大
+        self.config.min_entry_score = cfg.PAPER_MIN_ENTRY_SCORE   # 放开 0.05，缩紧时调大
+        self.config.cooldown_s = cfg.PAPER_COOLDOWN_S             # 放开 30s，缩紧时调大
         self._db_path = db_path or (Path("data") / "paper_trades.db")
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -287,7 +304,7 @@ class PaperTrader:
         conn.close()
 
     def _load_state(self):
-        """从数据库恢复余额"""
+        """从数据库恢复余额；并与交易记录一致化（balance = initial + sum(已平仓 net_pnl)）。"""
         conn = sqlite3.connect(str(self._db_path))
         row = conn.execute(
             "SELECT value FROM paper_state WHERE key = ?", ("balance",)
@@ -296,7 +313,22 @@ class PaperTrader:
             self._balance = float(row[0])
         else:
             self._balance = self.config.initial_balance
+
+        # 一致性：余额应等于 初始 + 所有已平仓交易的 net_pnl 之和（重启后无持仓，无占用保证金）
+        sum_row = conn.execute(
+            "SELECT COALESCE(SUM(net_pnl), 0) FROM paper_trades"
+        ).fetchone()
         conn.close()
+        if sum_row is not None:
+            sum_pnl = float(sum_row[0])
+            expected_balance = self.config.initial_balance + sum_pnl
+            if abs(self._balance - expected_balance) > 0.02:
+                logger.warning(
+                    f"[纸盘] 余额与交易记录不一致: 当前 balance={self._balance:.2f} "
+                    f"预期 initial+sum(net_pnl)={expected_balance:.2f}，已按交易记录修正"
+                )
+                self._balance = expected_balance
+                self._save_state()
 
     def _save_trade(self, trade: PaperTrade):
         """保存已完成交易"""
@@ -378,16 +410,26 @@ class PaperTrader:
             held_s = time.time() - existing.entry_time
 
             if is_neutral:
-                # 中性信号 → 仅当持仓超过最低时间才平仓
-                if held_s >= self.config.min_hold_s:
-                    should_close = True
-                    close_reason = "signal_neutral"
-                else:
+                # 错了马上出、对了拿住：NEUTRAL 时看浮盈浮亏
+                # 浮盈 > 0 → 视为跟对，拿住不平仓，等止盈/追踪止盈
+                # 浮亏或未知(≤0) → 视为错了，最短 min_hold_wrong_s 后即平
+                pnl_pct = getattr(existing, "unrealized_pnl_pct", 0.0) or 0.0
+                if pnl_pct > 0:
+                    should_close = False
                     self._log_signal(symbol, signal, score, confidence,
-                                     "hold", f"中性信号但持仓仅{held_s:.0f}s（需≥{self.config.min_hold_s:.0f}s）")
+                                     "hold", f"中性信号但浮盈+{pnl_pct:.2f}%，对了拿住不平仓")
                     logger.debug(
-                        f"[纸盘] {symbol} 中性信号但持仓仅{held_s:.0f}s "
-                        f"(需≥{self.config.min_hold_s:.0f}s)，继续持有"
+                        f"[纸盘] {symbol} NEUTRAL 浮盈 {pnl_pct:.2f}%，拿住不平仓"
+                    )
+                elif held_s >= self.config.min_hold_wrong_s:
+                    should_close = True
+                    close_reason = "signal_neutral_wrong"
+                else:
+                    should_close = False
+                    self._log_signal(symbol, signal, score, confidence,
+                                     "hold", f"中性信号浮亏/未知，最短{self.config.min_hold_wrong_s:.0f}s后平（已{held_s:.0f}s）")
+                    logger.debug(
+                        f"[纸盘] {symbol} NEUTRAL 浮亏/未知，{held_s:.0f}s < {self.config.min_hold_wrong_s:.0f}s，继续持有"
                     )
             elif existing.side == "LONG" and is_sell:
                 # 信号反转 — 也需要最低持仓保护（防止信号抖动导致秒级反转亏损）
@@ -783,6 +825,7 @@ class PaperTrader:
                 "equity": round(equity, 2),
                 "unrealized_pnl": round(unrealized, 2),
                 "return_pct": round((equity - self.config.initial_balance) / self.config.initial_balance * 100, 2),
+                "total_pnl_usdt": round(equity - self.config.initial_balance, 2),
             },
             "positions": positions,
             "stats": asdict(stats),

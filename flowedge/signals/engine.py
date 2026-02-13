@@ -1,6 +1,9 @@
 """
 信号引擎 — FlowEdge 核心决策层（南哥四层门卫框架 v3.0）。
 
+南哥打法（参考 flowdege/参考/）：高频 + 跟随做市商 + 判断方向，四层全做（含 L3 吸收/假墙/大单）。
+  L0=30分钟节点(可关) L1=环境 L2=位置 L3=行为 L4=方向。GATE_SKIP_BEHAVIOR_LAYER=true 仅临时“先开单”调试用。
+
 职责：
   1. 调用 SignalScorer 生成综合信号
   2. 调用 AnomalyDetector 检测异常
@@ -10,15 +13,8 @@
   6. 输出 KKline 兼容的情报格式（对接层）
 
 数据流：
-  FeatureEngine.get_snapshot()
-       ↓
-  SignalScorer.score() → CompositeSignal（原始评分）
-       ↓
-  EntryGate.evaluate() → GateResult（四层门卫过滤）
-       ↓
-  只有门卫全部通过才发出方向信号，否则强制 NEUTRAL
-       ↓
-  PaperTrader（带动态止损止盈）
+  FeatureEngine.get_snapshot() → SignalScorer.score() → EntryGate.evaluate()
+  → 只有门卫全部通过才发出方向信号，否则强制 NEUTRAL → PaperTrader（带动态止损止盈）
 """
 
 from __future__ import annotations
@@ -36,7 +32,8 @@ from .scorer import SignalScorer, CompositeSignal
 from .detector import AnomalyDetector, AnomalySnapshot, AnomalyEvent
 from .tracker import SignalTracker
 from .pusher import SignalPusher
-from .entry_gate import EntryGate, GateResult
+from .entry_gate import EntryGate, GateResult, GateConfig
+from ..config import cfg
 
 logger = logging.getLogger("flowedge.signals")
 
@@ -86,7 +83,12 @@ class SignalEngine:
         self.scorer = scorer or SignalScorer()
         self.detector = detector or AnomalyDetector()
         self.tracker = tracker or SignalTracker()
-        self.gate = gate or EntryGate()
+        self.gate = gate or EntryGate(config=GateConfig(
+            min_score=cfg.GATE_MIN_SCORE,
+            min_confidence=cfg.GATE_MIN_CONFIDENCE,
+            time_filter_enabled=cfg.GATE_TIME_FILTER_ENABLED,
+            skip_behavior_layer=cfg.GATE_SKIP_BEHAVIOR_LAYER,
+        ))
         self.pusher = SignalPusher()
         self.paper_trader = None  # 由 api.py 在 lifespan 中注入
 
