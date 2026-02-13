@@ -24,6 +24,7 @@
   - 方向来源：L2 LocationFilter 给出 suggested_side（价值区边界、VWAP 带、突破方向等），即「跟谁」的决策依据
   - L4 DirectionConfirm：只做「确认不反对」— 要求 score 方向、CVD/OFI 方向与 suggested_side 一致，否则拒绝；不独立判断方向
   - 准不准：取决于 L2 位置条件（VWAP/POC/VA 阈值等）是否贴近真实做市商行为；无实时「跟对/跟错」信号，事后用纸盘平仓盈亏统计（多单 exit>entry、空单 exit<entry 为跟对）
+  - 不能判断「跟的是不是做市商」：L3 只能看到吸收/假墙/大单等行为痕迹，无法区分是真实做市商还是散户/算法；做市商战略亏损（先故意亏再拉回）无专门逻辑，仅通过 PAPER_MIN_HOLD_WRONG_S 给浮亏持仓一点等待时间，避免 NEUTRAL+浮亏时秒平。
 """
 
 from __future__ import annotations
