@@ -21,7 +21,10 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flowedge.optimizer.param_registry import ParamRegistry
 
 
 @dataclass
@@ -52,41 +55,26 @@ class AnomalyDetector:
     异常检测器：扫描特征快照，识别极端状态。
     每次 detect() 调用时全量扫描，不依赖状态。
     维护最近 5 分钟事件历史用于 UI 显示。
+
+    所有检测阈值从 ParamRegistry 读取（唯一数据源），支持热更新。
     """
 
-    # ── 检测阈值（可配置） ──
-    THRESHOLDS = {
-        # VPIN
-        "vpin_high": 0.65,          # VPIN 高于此值 → 知情交易活跃
-        "vpin_critical": 0.80,      # VPIN 极端 → 可能有重大消息
+    # ── 所有检测阈值已迁移到 ParamRegistry，此处不再定义默认值 ──
 
-        # 资金费率 (%)
-        "funding_elevated": 0.03,   # 费率绝对值高于此 → 拥挤
-        "funding_extreme": 0.08,    # 费率极端
-
-        # 清算
-        "liq_major_usdt": 500_000,  # 1 分钟内单方向清算超此值 → 重大
-        "liq_cascade_count": 10,    # 1 分钟内清算笔数超此值 → 级联
-
-        # 假墙
-        "wall_frequent": 3,         # 30 秒内假墙超此值 → 盘口操纵
-
-        # OI 变化
-        "oi_surge_pct": 3.0,        # OI 变化超 3% → 大资金进出
-        "oi_global_surge": 5.0,     # 全网 OI 1h 变化超 5% → 市场级事件
-
-        # 情绪极端
-        "fng_extreme_low": 15,      # 极端恐惧
-        "fng_extreme_high": 85,     # 极端贪婪
-        "divergence_extreme": 0.5,  # 散户/鲸鱼分歧极端
-
-        # OFI z-score
-        "ofi_extreme_z": 3.0,       # OFI z-score 超 3 → 极端订单流
-    }
-
-    def __init__(self, history_window_s: int = 300):
+    def __init__(self, registry: "ParamRegistry", history_window_s: int = 300):
+        if not registry:
+            raise ValueError("AnomalyDetector 必须传入 ParamRegistry，禁止无 Registry 运行")
         self._history: deque = deque(maxlen=200)
         self._window_s = history_window_s
+        self._registry = registry
+
+        self.THRESHOLDS = registry.get_detector_thresholds()
+        registry.subscribe(self._on_params_updated)
+
+    def _on_params_updated(self, all_values: dict[str, float]) -> None:
+        """ParamRegistry 参数变更回调 — 热更新阈值"""
+        if self._registry:
+            self.THRESHOLDS = self._registry.get_detector_thresholds()
 
     def detect(self, features: dict, symbol: str = "") -> AnomalySnapshot:
         """

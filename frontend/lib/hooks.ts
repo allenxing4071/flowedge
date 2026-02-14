@@ -5,7 +5,13 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchDashboard, fetchSignal, fetchFeatures, fetchSignalHistory, fetchPerformance, fetchGateStatus } from './api';
+import {
+  fetchDashboard, fetchSignal, fetchFeatures, fetchSignalHistory,
+  fetchPerformance, fetchGateStatus,
+  fetchSchedulerStatus, fetchAgentStatus, fetchParamVersion,
+  fetchEvolutionTrend, fetchEvolutionHistory, fetchSchedulerHistory,
+  fetchParamHistory, fetchOptimizerStats,
+} from './api';
 
 // ── 通用轮询 Hook ──
 
@@ -281,4 +287,228 @@ export function usePerformance(symbol?: string, intervalMs = 10000) {
     [symbol],
   );
   return usePolling<PerformanceData>(fetcher, intervalMs);
+}
+
+// ── 进化看板 Hooks ──
+
+export interface SchedulerStatusData {
+  is_running: boolean;
+  background_active: boolean;
+  total_runs: number;
+  trigger_mode: string;
+  should_trigger: boolean;
+  trigger_reason: string;
+  last_run_sample_count: number;
+  config: {
+    check_interval_s: number;
+    lookback_days: number;
+    min_samples: number;
+    min_new_signals: number;
+    n_trials: number;
+    auto_apply: boolean;
+  };
+  last_run?: {
+    run_id: string;
+    status: string;
+    started_at: string;
+    elapsed_s: number;
+    validation_passed: boolean;
+    applied: boolean;
+  };
+  stats: { success: number; failed: number; skipped: number };
+}
+
+export interface AgentStatusData {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  api_key_set: boolean;
+  calls_today: number;
+  max_calls_per_day: number;
+  est_cost_today_usd: number;
+  daily_budget_usd: number;
+  last_run_at: string;
+  last_error: string;
+}
+
+export interface ParamVersionData {
+  version: number;
+  updated_at: string;
+  last_label: string;
+}
+
+export interface EvolutionTrendItem {
+  cycle_id: string;
+  started_at: string;
+  best_sharpe: number;
+  validation_score: number;
+  ai_grade: string;
+  ai_score: number;
+  total_signals: number;
+}
+
+export interface EvolutionTrendData {
+  trend: EvolutionTrendItem[];
+  total_successful: number;
+  message: string;
+}
+
+export interface EvolutionHistoryItem {
+  cycle_id: string;
+  status: string;
+  started_at: string;
+  elapsed_s: number;
+  total_signals: number;
+  new_signals: number;
+  validation_passed: boolean;
+  validation_score: number;
+  ai_grade: string;
+  ai_score: number;
+  ai_summary: string;
+  applied: boolean;
+  failure_reason: string | null;
+}
+
+export interface SchedulerHistoryItem {
+  run_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  elapsed_s: number;
+  total_signals: number;
+  train_size: number;
+  test_size: number;
+  validation_passed: boolean;
+  validation_score: number;
+  applied: boolean;
+  snapshot_name: string | null;
+  failure_reason: string | null;
+}
+
+export interface ParamHistoryItem {
+  timestamp: number;
+  timestamp_iso: string;
+  version: number;
+  label: string;
+  source: string;
+  changes_count: number;
+  changes: Record<string, { old: number; new: number }>;
+}
+
+export interface OptimizerStatsData {
+  registry: {
+    total_params: number;
+    version: number;
+    updated_at: string;
+    last_label: string;
+    history_count: number;
+    snapshots_count: number;
+  };
+  data: {
+    total_records: number;
+    records_with_1h: number;
+    records_with_factors: number;
+    symbols: string[];
+    date_range_days: number;
+    min_sample_ok: boolean;
+    issues: string[];
+  };
+  scheduler: SchedulerStatusData;
+  agent: AgentStatusData;
+}
+
+export function useSchedulerStatus(intervalMs = 10000) {
+  return usePolling<SchedulerStatusData>(fetchSchedulerStatus, intervalMs);
+}
+
+export function useAgentStatus(intervalMs = 10000) {
+  return usePolling<AgentStatusData>(fetchAgentStatus, intervalMs);
+}
+
+export function useParamVersion(intervalMs = 10000) {
+  return usePolling<ParamVersionData>(fetchParamVersion, intervalMs);
+}
+
+export function useEvolutionTrend(intervalMs = 30000) {
+  return usePolling<EvolutionTrendData>(fetchEvolutionTrend, intervalMs);
+}
+
+export function useEvolutionHistory(intervalMs = 15000) {
+  const fetcher = useCallback(() => fetchEvolutionHistory(50), []);
+  return usePolling<{ history: EvolutionHistoryItem[] }>(fetcher, intervalMs);
+}
+
+export function useSchedulerHistory(intervalMs = 15000) {
+  const fetcher = useCallback(() => fetchSchedulerHistory(20), []);
+  return usePolling<{ history: SchedulerHistoryItem[] }>(fetcher, intervalMs);
+}
+
+export function useParamHistory(intervalMs = 30000) {
+  const fetcher = useCallback(() => fetchParamHistory(50), []);
+  return usePolling<{ history: ParamHistoryItem[] }>(fetcher, intervalMs);
+}
+
+export function useOptimizerStats(intervalMs = 10000) {
+  return usePolling<OptimizerStatsData>(fetchOptimizerStats, intervalMs);
+}
+
+// 进化看板工具函数
+
+export function gradeColor(grade: string): string {
+  switch (grade) {
+    case 'A': return 'text-bull';
+    case 'B': return 'text-info';
+    case 'C': return 'text-warn';
+    case 'D': case 'F': return 'text-bear';
+    default: return 'text-text-tertiary';
+  }
+}
+
+export function gradeBg(grade: string): string {
+  switch (grade) {
+    case 'A': return 'bg-bull/15';
+    case 'B': return 'bg-info/15';
+    case 'C': return 'bg-warn/15';
+    case 'D': case 'F': return 'bg-bear/15';
+    default: return 'bg-surface-2';
+  }
+}
+
+export function statusColor(status: string): string {
+  switch (status) {
+    case 'success': return 'text-bull';
+    case 'failed': return 'text-bear';
+    case 'skipped': return 'text-text-tertiary';
+    case 'pending_approval': return 'text-warn';
+    case 'running': return 'text-info';
+    default: return 'text-text-tertiary';
+  }
+}
+
+export function statusLabel(status: string): string {
+  switch (status) {
+    case 'success': return '成功';
+    case 'failed': return '失败';
+    case 'skipped': return '跳过';
+    case 'pending_approval': return '待确认';
+    case 'running': return '运行中';
+    default: return status || '--';
+  }
+}
+
+export function formatDateTimeBJT(isoStr: string): string {
+  if (!isoStr) return '--';
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  } catch {
+    return isoStr;
+  }
 }

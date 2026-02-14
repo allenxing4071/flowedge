@@ -8,6 +8,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Modal } from '@/lib/modal';
 import {
   fetchPositions,
   fetchBalance,
@@ -130,13 +131,21 @@ export default function PositionsPanel() {
   }, [refresh]);
 
   const handleClose = async (symbol: string) => {
-    if (!confirm(`确认平仓 ${symbol}？`)) return;
+    const ok = await Modal.danger({
+      title: '确认平仓',
+      content: `确认平仓 ${symbol}？`,
+      okText: '确定平仓',
+    });
+    if (!ok) return;
     setClosing(symbol);
     try {
       await closeTrade({ symbol, ratio: 1.0, reason: 'FlowEdge 驾驶舱手动平仓' });
       await refresh();
     } catch (e) {
-      alert(`平仓失败: ${e instanceof Error ? e.message : '未知错误'}`);
+      await Modal.alertDanger({
+        title: '平仓失败',
+        content: e instanceof Error ? e.message : '未知错误',
+      });
     }
     setClosing(null);
   };

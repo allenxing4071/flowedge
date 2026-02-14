@@ -5,6 +5,7 @@
 
 'use client';
 
+import Link from 'next/link';
 import { usePolling } from '@/lib/hooks';
 import { fetchHealth, fetchStatus } from '@/lib/api';
 
@@ -55,6 +56,19 @@ export default function Header() {
               </span>
             </div>
           </div>
+
+          {/* 导航链接 */}
+          <nav className="hidden sm:flex items-center gap-1">
+            <Link
+              href="/evolution"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text-primary hover:bg-surface-2/50 transition-colors"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />
+              </svg>
+              进化
+            </Link>
+          </nav>
 
           {/* 中：关键指标（手机隐藏） */}
           <div className="hidden lg:flex items-center gap-8 text-sm text-text-secondary">

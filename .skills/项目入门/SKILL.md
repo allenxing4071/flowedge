@@ -52,7 +52,10 @@ FlowEdge/
 │       ├── sentiment.py       # 多空情绪综合
 │       └── trend.py           # 趋势上下文（多周期）
 ├── tests/
-│   └── test_features.py
+│   ├── conftest.py            # pytest fixture
+│   ├── test_features.py      # 特征计算单元测试
+│   ├── test_api.py           # API 端点测试
+│   └── test_rate_limiter.py  # 速率限制器测试
 ├── docs/
 │   └── architecture.md        # 架构文档
 ├── scripts/
@@ -163,6 +166,7 @@ docker compose up -d --build
 | "部署/上线" | `.skills/部署运维/SKILL.md` |
 | "数据源/数据质量" | `.skills/数据质量/SKILL.md` |
 | "特征/指标/算法" | `.skills/特征工程/SKILL.md` |
+| "开发/测试/pytest/单元测试" | `.skills/开发测试/SKILL.md` |
 
 ## 经验沉淀区
 

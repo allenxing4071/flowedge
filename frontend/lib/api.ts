@@ -217,4 +217,98 @@ export async function fetchQualityBoard() {
   return res.json();
 }
 
+// ── 进化看板 API ──
+
+export async function fetchOptimizerStats() {
+  const res = await fetch(`${API_BASE}/optimizer/stats`);
+  if (!res.ok) throw new Error(`优化统计请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSchedulerStatus() {
+  const res = await fetch(`${API_BASE}/optimizer/scheduler/status`);
+  if (!res.ok) throw new Error(`调度器状态请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAgentStatus() {
+  const res = await fetch(`${API_BASE}/optimizer/agent/status`);
+  if (!res.ok) throw new Error(`Agent状态请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchParamVersion() {
+  const res = await fetch(`${API_BASE}/optimizer/params/version`);
+  if (!res.ok) throw new Error(`参数版本请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchParamHistory(limit = 50) {
+  const res = await fetch(`${API_BASE}/optimizer/params/history?limit=${limit}`);
+  if (!res.ok) throw new Error(`参数历史请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEvolutionStatus() {
+  const res = await fetch(`${API_BASE}/optimizer/evolution/status`);
+  if (!res.ok) throw new Error(`进化状态请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEvolutionHistory(limit = 50) {
+  const res = await fetch(`${API_BASE}/optimizer/evolution/history?limit=${limit}`);
+  if (!res.ok) throw new Error(`进化历史请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEvolutionTrend() {
+  const res = await fetch(`${API_BASE}/optimizer/evolution/trend`);
+  if (!res.ok) throw new Error(`进化趋势请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSchedulerHistory(limit = 20) {
+  const res = await fetch(`${API_BASE}/optimizer/scheduler/history?limit=${limit}`);
+  if (!res.ok) throw new Error(`调度历史请求失败: ${res.status}`);
+  return res.json();
+}
+
+// ── 进化操作 API ──
+
+export async function triggerEvolveNow() {
+  const res = await fetch(`${API_BASE}/optimizer/evolve`, { method: 'POST' });
+  if (!res.ok) throw new Error(`触发进化失败: ${res.status}`);
+  return res.json();
+}
+
+export async function approveEvolution(cycleId: string) {
+  const res = await fetch(`${API_BASE}/optimizer/evolution/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cycle_id: cycleId }),
+  });
+  if (!res.ok) throw new Error(`审批进化失败: ${res.status}`);
+  return res.json();
+}
+
+// ── 参数全景 API ──
+
+export async function fetchAllParams() {
+  const res = await fetch(`${API_BASE}/optimizer/params`);
+  if (!res.ok) throw new Error(`参数列表请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchParamGroups() {
+  const res = await fetch(`${API_BASE}/optimizer/params/groups`);
+  if (!res.ok) throw new Error(`参数分组请求失败: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchParamSnapshots() {
+  const res = await fetch(`${API_BASE}/optimizer/params/snapshots`);
+  if (!res.ok) throw new Error(`参数快照请求失败: ${res.status}`);
+  return res.json();
+}
+
 export { API_BASE };

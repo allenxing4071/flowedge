@@ -105,6 +105,24 @@ class SignalTracker:
             CREATE INDEX IF NOT EXISTS idx_tracks_entry_time
             ON signal_tracks(entry_time_ms)
         """)
+        # 因子明细表（用于优化系统回测）
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS signal_factor_details (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                track_id INTEGER NOT NULL,
+                factor_name TEXT NOT NULL,
+                factor_score REAL NOT NULL,
+                factor_weight REAL NOT NULL,
+                factor_raw_value REAL,
+                regime TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (track_id) REFERENCES signal_tracks(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_factor_details_track
+            ON signal_factor_details(track_id)
+        """)
         conn.commit()
         conn.close()
         logger.info(f"[Tracker] 数据库已初始化: {self._db_path}")
@@ -144,10 +162,16 @@ class SignalTracker:
         signal: str,
         score: float,
         confidence: float,
+        factors: Optional[list] = None,
+        regime: Optional[str] = None,
     ) -> None:
         """
         信号变化时调用。记录当前价格，创建追踪记录。
         只追踪有方向的信号（BUY/SELL），跳过 NEUTRAL。
+
+        参数:
+            factors: FactorScore 列表（可选，用于存储因子明细）
+            regime: 当前市场环境（可选）
         """
         if signal == "NEUTRAL":
             return
@@ -159,12 +183,27 @@ class SignalTracker:
 
         now_ms = int(time.time() * 1000)
         conn = sqlite3.connect(str(self._db_path))
-        conn.execute(
+        cursor = conn.execute(
             """INSERT INTO signal_tracks
                (symbol, signal, score, confidence, entry_price, entry_time_ms)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (symbol, signal, score, confidence, price, now_ms),
         )
+        track_id = cursor.lastrowid
+
+        # 存储因子明细（如果提供）— 这是优化系统回测的关键数据
+        if factors and track_id:
+            for f in factors:
+                try:
+                    conn.execute(
+                        """INSERT INTO signal_factor_details
+                           (track_id, factor_name, factor_score, factor_weight, factor_raw_value, regime)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (track_id, f.name, f.score, f.weight, f.raw_value, regime or ""),
+                    )
+                except Exception:
+                    pass  # 因子明细存储失败不影响主流程
+
         conn.commit()
         conn.close()
 

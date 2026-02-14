@@ -24,6 +24,7 @@ alwaysApply: true
 | "部署/上线/重启/同步代码" | `.skills/部署运维/SKILL.md` | R6(部署) R0(变更控制) |
 | "数据源/数据质量/噪声/采集" | `.skills/数据质量/SKILL.md` | R0(变更控制) R4(速率限制) |
 | "特征/指标/计算/OFI/CVD/VPIN" | `.skills/特征工程/SKILL.md` | R0(变更控制) |
+| "开发/测试/pytest/单元测试" | `.skills/开发测试/SKILL.md` | R1(验证) |
 | 修改代码/修 Bug/加功能 | 无专属 Skill，按 Rules 执行 | R0(变更控制) R1(验证) R7(注释) |
 | 新经验/踩坑 | 写入对应 Skill 的"经验沉淀"区 | R8(经验沉淀) |
 

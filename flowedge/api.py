@@ -38,14 +38,21 @@ from .feeds.external import ExternalDataCollector
 from .core.rate_limiter import rate_limiters
 from .signals.engine import SignalEngine
 from .paper_trader import PaperTrader
+from .optimizer.param_registry import ParamRegistry
+from .optimizer.data_manager import DataManager
+from .optimizer.api import router as optimizer_router, init_optimizer_api, get_scheduler, get_agent
 from .config import cfg
 
 logger = logging.getLogger("flowedge.api")
 
 # ── 全局实例 ──
-engine = FeatureEngine()
-signal_engine = SignalEngine()
-paper_trader = PaperTrader()
+# 参数注册中心（所有可优化参数的唯一数据源）
+param_registry = ParamRegistry(data_dir="data/optimizer")
+data_manager = DataManager(db_path="data/signal_tracker.db")
+
+engine = FeatureEngine(registry=param_registry)
+signal_engine = SignalEngine(registry=param_registry)
+paper_trader = PaperTrader(registry=param_registry)
 binance_rest = BinanceRestCollector()
 market_data = MarketDataCollector()
 external_data = ExternalDataCollector()
@@ -131,6 +138,35 @@ async def lifespan(app: FastAPI):
     signal_engine.paper_trader = paper_trader
     _tasks.append(asyncio.create_task(paper_trader.equity_loop(interval_s=cfg.EQUITY_LOOP_S)))
 
+    # ── 自动优化调度器：样本驱动，数据够了立刻触发优化 ──
+    scheduler = get_scheduler()
+    if scheduler:
+        await scheduler.start_background()
+        logger.info("[FlowEdge] 优化调度器已启动（样本驱动模式）")
+
+    # ── Agent 总控：定时自动触发进化决策 ──
+    agent = get_agent()
+    if agent:
+        async def _agent_auto_loop():
+            """Agent 自动循环：每 24 小时执行一次 plan + run"""
+            INTERVAL_S = 24 * 3600  # 每天一次
+            # 首次等待 10 分钟，让数据先积累一些
+            await asyncio.sleep(600)
+            while True:
+                try:
+                    plan = agent.plan(goal="auto_optimize")
+                    action = plan.get("action", "hold")
+                    logger.info(f"[Agent] 自动计划: action={action}, reason={plan.get('reason', '')}")
+                    if action != "hold":
+                        result = agent.run_once(goal="auto_optimize", dry_run=False)
+                        logger.info(f"[Agent] 执行完成: {result.get('status', 'unknown')}")
+                except Exception as e:
+                    logger.error(f"[Agent] 自动循环异常: {e}")
+                await asyncio.sleep(INTERVAL_S)
+
+        _tasks.append(asyncio.create_task(_agent_auto_loop()))
+        logger.info("[FlowEdge] Agent 总控已启动（每 24h 自动决策）")
+
     # 数据源状态摘要
     sources = []
     sources.append(f"6 WS 流")
@@ -144,7 +180,7 @@ async def lifespan(app: FastAPI):
     mode_note = ""
     if cfg.NANGE_MODE:
         mode_note = " | 南哥打法(高频+跟随+判断方向)"
-    if cfg.GATE_SKIP_BEHAVIOR_LAYER:
+    if bool(int(param_registry.get("gate_skip_behavior_layer"))):
         mode_note += " L3跳过"
     logger.info(
         f"[FlowEdge v3.0] 已启动 — "
@@ -159,6 +195,10 @@ async def lifespan(app: FastAPI):
 
     # 关闭
     logger.info("[FlowEdge] 正在关闭...")
+    # 停止优化调度器后台任务
+    scheduler = get_scheduler()
+    if scheduler:
+        await scheduler.stop_background()
     for feed in _feeds:
         feed.stop()
     binance_rest.stop()
@@ -185,6 +225,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── 优化系统 API（注入 paper_trader，进化应用新参数时自动重置纸盘）──
+init_optimizer_api(param_registry, data_manager, paper_trader=paper_trader)
+app.include_router(optimizer_router)
 
 
 class OrjsonResponse(JSONResponse):
@@ -461,9 +505,9 @@ async def orderflow_stream(symbol: str):
 @app.get("/bridge/kkline/{symbol}", response_class=OrjsonResponse)
 async def bridge_kkline(symbol: str):
     """
-    KKline 兼容情报格式。
+    KKline 兼容情报格式（增强版）。
     KKline 可定期拉取此端点，注入其 DeepSeek 分析器的上下文中，
-    让 AI 决策获得 FlowEdge 的微观结构+信号数据加持。
+    让 AI 决策获得 FlowEdge 的微观结构+信号数据+优化系统校准信息。
     """
     symbol = symbol.upper()
     snapshot = engine.get_snapshot(symbol=symbol)
@@ -473,7 +517,25 @@ async def bridge_kkline(symbol: str):
             content={"error": f"未找到 {symbol} 的数据"},
             status_code=404,
         )
-    return signal_engine.get_kkline_intel(symbol, features)
+    intel = signal_engine.get_kkline_intel(symbol, features)
+
+    # 注入优化系统校准信息
+    try:
+        calibration = {
+            "optimizer_active": param_registry is not None,
+            "current_regime": "unknown",
+            "param_version": "default",
+        }
+        if param_registry:
+            stats = param_registry.stats()
+            calibration["param_version"] = stats.get("snapshots_count", 0)
+            calibration["total_params"] = stats.get("total_params", 0)
+
+        intel["optimization_calibration"] = calibration
+    except Exception:
+        pass  # 优化系统信息为增强项，不影响核心数据
+
+    return intel
 
 
 # ══════════════════════════════════════════

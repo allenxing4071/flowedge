@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flowedge.optimizer.param_registry import ParamRegistry
 
 
 # ── 评分结果 ──
@@ -45,59 +48,10 @@ class CompositeSignal:
     timestamp_ms: int = 0
 
 
-# ── 因子权重配置 ──
-# 微观结构因子（CVD + OFI + Book）权重最大——这是实时边
-# 聪明钱因子（大单 + 深度变化）次之
-# 宏观因子（趋势 + 情绪）提供方向背景
-
-DEFAULT_WEIGHTS = {
-    # ── 微观结构因子（实时边）──
-    "cvd":            0.12,   # 成交量 delta — 实时买卖力量
-    "ofi":            0.12,   # 订单流不平衡 — 挂单变化
-    "book_imbalance": 0.08,   # L1 盘口压力
-    "large_trade":    0.10,   # 大单资金流 — 聪明钱
-    "depth_change":   0.06,   # 深度变化 + 假墙检测
-    # ── 做市商逻辑因子（新增）──
-    "vwap":           0.08,   # VWAP 偏离度 — 均值回归/趋势确认
-    "volume_profile": 0.07,   # Volume Profile — 支撑阻力判断
-    "absorption":     0.10,   # 吸收检测 — 大资金意图暴露
-    # ── 宏观/情绪因子 ──
-    "funding":        0.08,   # 资金费率 — 反向指标
-    "liquidation":    0.06,   # 清算级联 — 极端市况
-    "sentiment":      0.05,   # 多空情绪 + 恐慌贪婪
-    "trend":          0.05,   # 多周期趋势一致性
-    "vpin":           0.02,   # 知情交易概率
-    "oi":             0.01,   # 持仓量变化
-}
-# 权重合计 = 1.00
-
-
-# ── 评分阈值 ──
-
-# 综合信号阈值（入场阈值 — 从 NEUTRAL 进入方向性信号）
-SIGNAL_THRESHOLDS = {
-    "strong_buy":  0.40,
-    "buy":         0.15,
-    "sell":       -0.15,
-    "strong_sell": -0.40,
-}
-
-# 滞后区退出阈值（从方向性信号回到 NEUTRAL 的阈值，比入场低）
-# 例：score 0.15 触发 BUY，但需跌到 0.08 以下才回 NEUTRAL
-# 这避免了信号在入场阈值附近反复抖动
-EXIT_THRESHOLDS = {
-    "buy_exit":         0.08,   # BUY → NEUTRAL 需 score < 0.08
-    "sell_exit":       -0.08,   # SELL → NEUTRAL 需 score > -0.08
-    "strong_buy_exit":  0.25,   # STRONG_BUY → BUY 需 score < 0.25
-    "strong_sell_exit": -0.25,  # STRONG_SELL → SELL 需 score > -0.25
-}
-
-# 反转阈值（从 BUY→SELL 或 SELL→BUY，需要更强的信号）
-# 防止 score 在零点附近振荡导致 whipsaw
-REVERSAL_THRESHOLDS = {
-    "buy_to_sell":     -0.25,   # BUY→SELL 需 score < -0.25（正常 SELL 入场仅需 -0.15）
-    "sell_to_buy":      0.25,   # SELL→BUY 需 score > 0.25（正常 BUY 入场仅需 0.15）
-}
+# ── 所有评分参数（权重/阈值/灵敏度）已迁移到 ParamRegistry（唯一数据源） ──
+# 不再在此文件中定义任何默认值常量
+# 所有参数通过 API 热更新：PUT /optimizer/params
+# 查看当前值：GET /optimizer/params
 
 
 def _clamp(v: float, lo: float = -1.0, hi: float = 1.0) -> float:
@@ -112,11 +66,15 @@ def _tanh_scale(v: float, sensitivity: float = 1.0) -> float:
 class SignalScorer:
     """
     多因子评分器：读取特征快照 dict → 输出 CompositeSignal。
+
+    支持两种模式：
+      1. 传统模式（向后兼容）：使用硬编码默认值
+      2. Registry 模式：从 ParamRegistry 读取所有参数，支持热更新
     """
 
-    # 市场活跃度自适应：不同环境下的微观结构因子权重倍率
+    # 市场活跃度自适应：不同环境下的微观结构因子权重倍率（默认值）
     # 学术依据：订单流信号在高波动期有效（+0.60%），低波动期失效（-0.16%）
-    REGIME_MULTIPLIERS = {
+    _DEFAULT_REGIME_MULTIPLIERS = {
         "trending":   {"micro": 1.2, "macro": 0.8},   # 趋势中微观信号更可靠
         "breakout":   {"micro": 1.3, "macro": 0.7},   # 突破时微观信号最强
         "ranging":    {"micro": 0.8, "macro": 1.2},   # 震荡中宏观因子更重要
@@ -130,13 +88,127 @@ class SignalScorer:
     # 宏观因子列表
     MACRO_FACTORS = {"funding", "liquidation", "sentiment", "trend", "vpin", "oi"}
 
-    def __init__(self, weights: Optional[dict] = None):
-        self._base_weights = weights or DEFAULT_WEIGHTS.copy()
+    def __init__(self, registry: "ParamRegistry"):
+        if not registry:
+            raise ValueError("SignalScorer 必须传入 ParamRegistry，禁止无 Registry 运行")
+        self._registry = registry
+
+        # 从 Registry 初始化所有参数（唯一数据源）
+        self._base_weights = registry.get_weights_dict()
+        self._signal_thresholds = registry.get_signal_thresholds()
+        self._exit_thresholds = registry.get_exit_thresholds()
+        self._reversal_thresholds = registry.get_reversal_thresholds()
+        self._regime_multipliers = registry.get_regime_multipliers()
+        # 置信度参数
+        self._conf_bullish_threshold = registry.get("conf_bullish_threshold")
+        self._conf_bearish_threshold = registry.get("conf_bearish_threshold")
+        self._conf_dominant_boost_count = int(registry.get("conf_dominant_boost_count"))
+        self._conf_dominant_boost_mult = registry.get("conf_dominant_boost_mult")
+        # 评分函数内部参数（全部从 Registry 读取）
+        self._sync_scorer_params(registry)
+        # 注册热更新回调
+        registry.subscribe(self._on_params_updated)
+
         self.weights = self._base_weights.copy()
         # 每币种上一次确认的信号（用于滞后区判断）
         self._prev_signals: dict[str, str] = {}
         # 当前市场环境（由 engine 在评估前设置）
         self._current_regime: str = "unclear"
+
+    def _sync_scorer_params(self, reg: "ParamRegistry") -> None:
+        """从 Registry 读取评分函数内部所有参数"""
+        g = reg.get  # 简写
+        # CVD
+        self._cvd_min_volume = g("score_cvd_min_volume")
+        self._cvd_trend_scale = g("score_cvd_trend_scale")
+        self._cvd_base_weight = g("score_cvd_base_weight")
+        self._cvd_trend_weight = g("score_cvd_trend_weight")
+        self._cvd_div_threshold = g("score_cvd_div_threshold")
+        self._cvd_div_base_weight = g("score_cvd_div_base_weight")
+        self._cvd_div_weight = g("score_cvd_div_weight")
+        # OFI
+        self._ofi_core_sensitivity = g("score_ofi_core_sensitivity")
+        self._ofi_long_sensitivity = g("score_ofi_long_sensitivity")
+        self._ofi_trend_sensitivity = g("score_ofi_trend_sensitivity")
+        self._ofi_core_weight = g("score_ofi_core_weight")
+        self._ofi_long_weight = g("score_ofi_long_weight")
+        self._ofi_trend_weight = g("score_ofi_trend_weight")
+        self._ofi_agree_boost = g("score_ofi_agree_boost")
+        self._ofi_disagree_mult = g("score_ofi_disagree_mult")
+        # 大单
+        self._lt_min_total = g("score_lt_min_total")
+        self._lt_count_boost_rate = g("score_lt_count_boost_rate")
+        self._lt_count_boost_max = g("score_lt_count_boost_max")
+        # 深度
+        self._depth_sensitivity = g("score_depth_sensitivity")
+        self._depth_wall_threshold = int(g("score_depth_wall_threshold"))
+        self._depth_wall_mult = g("score_depth_wall_mult")
+        # 资金费率
+        self._funding_sensitivity = g("score_funding_sensitivity")
+        self._funding_extreme_mult = g("score_funding_extreme_mult")
+        # 清算
+        self._liq_min_net = g("score_liq_min_net")
+        self._liq_scale = g("score_liq_scale")
+        self._liq_sensitivity = g("score_liq_sensitivity")
+        # 情绪
+        self._sent_fng_sensitivity = g("score_sent_fng_sensitivity")
+        self._sent_retail_sensitivity = g("score_sent_retail_sensitivity")
+        self._sent_whale_sensitivity = g("score_sent_whale_sensitivity")
+        self._sent_fng_weight = g("score_sent_fng_weight")
+        self._sent_retail_weight = g("score_sent_retail_weight")
+        self._sent_whale_weight = g("score_sent_whale_weight")
+        # 趋势
+        self._trend_vol_threshold = g("score_trend_vol_threshold")
+        self._trend_vol_boost = g("score_trend_vol_boost")
+        # VPIN
+        self._vpin_low_threshold = g("score_vpin_low_threshold")
+        self._vpin_penalty_rate = g("score_vpin_penalty_rate")
+        self._vpin_direction_scale = g("score_vpin_direction_scale")
+        # OI
+        self._oi_min_change = g("score_oi_min_change")
+        self._oi_sensitivity = g("score_oi_sensitivity")
+        self._oi_global_threshold = g("score_oi_global_threshold")
+        self._oi_global_sensitivity = g("score_oi_global_sensitivity")
+        self._oi_local_weight = g("score_oi_local_weight")
+        self._oi_global_weight = g("score_oi_global_weight")
+        # VWAP
+        self._vwap_mr_sensitivity = g("score_vwap_mr_sensitivity")
+        self._vwap_mr_divisor = g("score_vwap_mr_divisor")
+        self._vwap_trend_threshold = g("score_vwap_trend_threshold")
+        self._vwap_trend_sensitivity = g("score_vwap_trend_sensitivity")
+        self._vwap_trend_divisor = g("score_vwap_trend_divisor")
+        self._vwap_mr_weight = g("score_vwap_mr_weight")
+        self._vwap_trend_weight = g("score_vwap_trend_weight")
+        # Volume Profile
+        self._vp_min_volume = g("score_vp_min_volume")
+        self._vp_va_sensitivity = g("score_vp_va_sensitivity")
+        self._vp_va_divisor = g("score_vp_va_divisor")
+        self._vp_breakout_sensitivity = g("score_vp_breakout_sensitivity")
+        self._vp_breakout_divisor = g("score_vp_breakout_divisor")
+        # 吸收
+        self._abs_event_threshold = int(g("score_abs_event_threshold"))
+        self._abs_event_boost_rate = g("score_abs_event_boost_rate")
+        self._abs_event_boost_max = g("score_abs_event_boost_max")
+
+    def _on_params_updated(self, all_values: dict[str, float]) -> None:
+        """ParamRegistry 参数变更回调 — 热更新权重、阈值和评分参数"""
+        if not self._registry:
+            return
+        self._base_weights = self._registry.get_weights_dict()
+        self._signal_thresholds = self._registry.get_signal_thresholds()
+        self._exit_thresholds = self._registry.get_exit_thresholds()
+        self._reversal_thresholds = self._registry.get_reversal_thresholds()
+        self._regime_multipliers = self._registry.get_regime_multipliers()
+        self._conf_bullish_threshold = self._registry.get("conf_bullish_threshold")
+        self._conf_bearish_threshold = self._registry.get("conf_bearish_threshold")
+        self._conf_dominant_boost_count = int(self._registry.get("conf_dominant_boost_count"))
+        self._conf_dominant_boost_mult = self._registry.get("conf_dominant_boost_mult")
+        # 评分函数内部参数
+        self._sync_scorer_params(self._registry)
+        # 强制重算当前环境权重
+        old_regime = self._current_regime
+        self._current_regime = "__force_recalc__"
+        self.set_regime(old_regime)
 
     def set_regime(self, regime: str) -> None:
         """
@@ -147,7 +219,7 @@ class SignalScorer:
             return  # 无变化，跳过重算
 
         self._current_regime = regime
-        mults = self.REGIME_MULTIPLIERS.get(regime, {"micro": 1.0, "macro": 1.0})
+        mults = self._regime_multipliers.get(regime, {"micro": 1.0, "macro": 1.0})
 
         # 按类别应用倍率
         adjusted = {}
@@ -225,16 +297,16 @@ class SignalScorer:
         # ── 加权合成 ──
         total_score = sum(f.score * f.weight for f in factors)
 
-        # ── 置信度：因子一致性 ──
-        bullish = sum(1 for f in factors if f.score > 0.1)
-        bearish = sum(1 for f in factors if f.score < -0.1)
+        # ── 置信度：因子一致性（参数化阈值） ──
+        bullish = sum(1 for f in factors if f.score > self._conf_bullish_threshold)
+        bearish = sum(1 for f in factors if f.score < self._conf_bearish_threshold)
         neutral = len(factors) - bullish - bearish
         dominant = max(bullish, bearish)
         confidence = dominant / len(factors) if factors else 0.0
 
         # 加强：如果方向一致性极高，上调置信度
-        if dominant >= 8:
-            confidence = min(1.0, confidence * 1.2)
+        if dominant >= self._conf_dominant_boost_count:
+            confidence = min(1.0, confidence * self._conf_dominant_boost_mult)
 
         # ── 信号分级（带滞后区，防止临界点抖动）──
         prev_sig = self._prev_signals.get(symbol, "NEUTRAL")
@@ -257,15 +329,14 @@ class SignalScorer:
     # 滞后区信号分类
     # ══════════════════════════════════════════
 
-    @staticmethod
-    def _classify_with_hysteresis(score: float, prev_signal: str) -> str:
+    def _classify_with_hysteresis(self, score: float, prev_signal: str) -> str:
         """
         带滞后区 + 反转保护 的信号分类。
 
         三层保护：
-          1. 入场阈值（NEUTRAL→方向）：BUY=0.15, SELL=-0.15
-          2. 退出阈值（方向→NEUTRAL）：buy_exit=0.08, sell_exit=-0.08
-          3. 反转阈值（BUY→SELL 或 SELL→BUY）：需 ±0.25，防 whipsaw
+          1. 入场阈值（NEUTRAL→方向）：从 registry 或默认值读取
+          2. 退出阈值（方向→NEUTRAL）：从 registry 或默认值读取
+          3. 反转阈值（BUY→SELL 或 SELL→BUY）：从 registry 或默认值读取
 
         例：
           - NEUTRAL + score=0.16 → BUY（入场）
@@ -274,9 +345,9 @@ class SignalScorer:
           - BUY + score=-0.16 → NEUTRAL（未达反转阈值 -0.25，先回 NEUTRAL）
           - BUY + score=-0.26 → SELL（达到反转阈值，直接反转）
         """
-        th = SIGNAL_THRESHOLDS
-        ex = EXIT_THRESHOLDS
-        rv = REVERSAL_THRESHOLDS
+        th = self._signal_thresholds
+        ex = self._exit_thresholds
+        rv = self._reversal_thresholds
 
         if prev_signal in ("STRONG_BUY", "BUY"):
             # 当前持多 — 优先检查反转（需更强信号），再检查退出
@@ -327,42 +398,30 @@ class SignalScorer:
     # ══════════════════════════════════════════
 
     def _score_cvd(self, cvd: dict) -> FactorScore:
-        """
-        CVD: 买卖 delta 方向 + 5 分钟趋势 + 量价背离检测。
-
-        增强逻辑（南哥核心方法）：
-          1. 买卖比 → 基础方向信号（60%）
-          2. 5 分钟 CVD 趋势 → 确认信号（20%）
-          3. 量价背离 → 反转预警（20%）— 价格新高但 CVD 未新高 = 看跌
-        """
+        """CVD: 买卖 delta 方向 + 5 分钟趋势 + 量价背离检测。"""
         w = self.weights.get("cvd", 0.15)
         buy = cvd.get("buy_vol_1m", 0)
         sell = cvd.get("sell_vol_1m", 0)
         total = buy + sell
 
-        if total < 100:  # 成交量太低，无信号
+        if total < self._cvd_min_volume:
             return FactorScore("cvd", 0.0, w, 0.0, "成交量不足")
 
-        # 1. 买卖比 → 方向（60%）
-        ratio = (buy - sell) / total  # [-1, 1]
+        ratio = (buy - sell) / total
 
-        # 2. 5 分钟 CVD 趋势作为确认（20%）
         cvd_5m = cvd.get("cvd_5m", 0)
         if cvd_5m != 0 and total > 0:
-            trend_boost = _clamp(cvd_5m / total * 0.3, -0.3, 0.3)
+            trend_boost = _clamp(cvd_5m / total * self._cvd_trend_scale, -0.3, 0.3)
         else:
             trend_boost = 0
 
-        base_score = _clamp(ratio * 0.8 + trend_boost * 0.2)
+        base_score = _clamp(ratio * self._cvd_base_weight + trend_boost * self._cvd_trend_weight)
 
-        # 3. 量价背离检测（20%）— 背离信号与基础方向可能相反
         div_score = cvd.get("divergence_score", 0)
         div_type = cvd.get("divergence_type", "none")
 
-        if div_type != "none" and abs(div_score) > 0.1:
-            # 背离信号存在 → 混合到总分中
-            # 背离与当前方向相反时，削弱信号；同向时，增强信号
-            score = base_score * 0.8 + div_score * 0.2
+        if div_type != "none" and abs(div_score) > self._cvd_div_threshold:
+            score = base_score * self._cvd_div_base_weight + div_score * self._cvd_div_weight
         else:
             score = base_score
 
@@ -377,41 +436,26 @@ class SignalScorer:
         return FactorScore("cvd", round(score, 4), w, ratio, reason)
 
     def _score_ofi(self, ofi: dict) -> FactorScore:
-        """
-        OFI: 多时间窗口订单流不平衡评分。
-
-        增强逻辑（基于 Cont et al. 2014 + 广义平稳化 OFI 研究）：
-          1. 短期 z-score（30s）作为核心信号
-          2. 长期 z-score（5m）作为趋势确认
-          3. OFI 趋势（加速/减速）作为动量加成
-          4. 多窗口一致性作为置信度加成
-        """
+        """OFI: 多时间窗口订单流不平衡评分。"""
         w = self.weights.get("ofi", 0.15)
         z_30s = ofi.get("z_score_30s", 0)
         z_5m = ofi.get("z_score_5m", 0)
         trend = ofi.get("ofi_trend", 0)
         agreement = ofi.get("multi_window_agreement", 0)
 
-        # 核心信号：30s z-score（权重 60%）
-        core_score = _tanh_scale(z_30s, sensitivity=0.5)
+        core_score = _tanh_scale(z_30s, sensitivity=self._ofi_core_sensitivity)
+        long_score = _tanh_scale(z_5m, sensitivity=self._ofi_long_sensitivity)
+        trend_score = _tanh_scale(trend, sensitivity=self._ofi_trend_sensitivity)
 
-        # 长期确认：5m z-score（权重 20%）
-        long_score = _tanh_scale(z_5m, sensitivity=0.4)
+        score = (core_score * self._ofi_core_weight
+                 + long_score * self._ofi_long_weight
+                 + trend_score * self._ofi_trend_weight)
 
-        # 趋势动量：OFI 加速方向（权重 20%）
-        trend_score = _tanh_scale(trend, sensitivity=0.8)
-
-        # 基础合成
-        score = core_score * 0.6 + long_score * 0.2 + trend_score * 0.2
-
-        # 多窗口一致性加成：方向一致时增强信号，不一致时削弱
         if agreement * score > 0:
-            # 一致性与信号同向 → 增强（最多 +30%）
-            boost = abs(agreement) * 0.3
+            boost = abs(agreement) * self._ofi_agree_boost
             score = _clamp(score * (1 + boost))
         elif abs(agreement) > 0.5 and agreement * score < 0:
-            # 强烈不一致 → 削弱（最多 -30%）
-            score *= 0.7
+            score *= self._ofi_disagree_mult
 
         reason_parts = [f"z30s={z_30s:.2f}"]
         if abs(z_5m) > 0.5:
@@ -446,13 +490,12 @@ class SignalScorer:
         sell_total = lt.get("sell_total_30s", 0)
         total = buy_total + sell_total
 
-        if total < 10000:
+        if total < self._lt_min_total:
             return FactorScore("large_trade", 0.0, w, 0.0, "无大单")
 
-        ratio = net / total  # [-1, 1]
+        ratio = net / total
         count = lt.get("count_30s", 0)
-        # 大单数量加成
-        count_boost = min(count * 0.05, 0.2)
+        count_boost = min(count * self._lt_count_boost_rate, self._lt_count_boost_max)
         if ratio > 0:
             score = _clamp(ratio + count_boost)
         else:
@@ -470,12 +513,10 @@ class SignalScorer:
         imb = dc.get("depth_imbalance", 0)
         walls = dc.get("wall_events_30s", 0)
 
-        # 深度不平衡 → [-1, 1]
-        score = _tanh_scale(imb / 100, sensitivity=2.0)
+        score = _tanh_scale(imb / 100, sensitivity=self._depth_sensitivity)
 
-        # 假墙出现时降低该因子可信度
-        if walls >= 2:
-            score *= 0.5
+        if walls >= self._depth_wall_threshold:
+            score *= self._depth_wall_mult
             reason = f"深度不平衡 {imb:.1f}% (假墙×{walls}，可信度降低)"
         else:
             reason = f"深度不平衡 {imb:.1f}%"
@@ -491,13 +532,10 @@ class SignalScorer:
         rate = f_data.get("current_rate", 0)
         extreme = f_data.get("extreme_level", "normal")
 
-        # 反向映射：positive funding → negative score
-        # 典型费率范围: -0.05% ~ +0.1%，极端时 ±0.5%
-        score = _tanh_scale(-rate * 100, sensitivity=3.0)
+        score = _tanh_scale(-rate * 100, sensitivity=self._funding_sensitivity)
 
-        # 极端等级加成
         if extreme in ("extreme", "critical"):
-            score = _clamp(score * 1.5)
+            score = _clamp(score * self._funding_extreme_mult)
 
         reason = f"费率 {rate:.4f}% ({extreme})"
         return FactorScore("funding", round(score, 4), w, rate, reason)
@@ -511,11 +549,10 @@ class SignalScorer:
         net = liq.get("net_liq_1m", 0)  # positive = long liq dominates
         cascade = liq.get("cascade_level", "none")
 
-        if abs(net) < 1000:
+        if abs(net) < self._liq_min_net:
             return FactorScore("liquidation", 0.0, w, 0.0, "无显著清算")
 
-        # 多头清算 → 看空 → negative score
-        score = _tanh_scale(-net / 500000, sensitivity=1.0)
+        score = _tanh_scale(-net / self._liq_scale, sensitivity=self._liq_sensitivity)
 
         # 级联加成
         cascade_mult = {"none": 1.0, "minor": 1.2, "major": 1.5, "extreme": 2.0}
@@ -535,20 +572,18 @@ class SignalScorer:
         """
         w = self.weights.get("sentiment", 0.07)
 
-        # 恐慌贪婪指数 → 反向
         fng = sent.get("fear_greed_value", 50)
-        fng_score = _tanh_scale((50 - fng) / 50, sensitivity=1.5)
+        fng_score = _tanh_scale((50 - fng) / 50, sensitivity=self._sent_fng_sensitivity)
 
-        # 散户多空比 → 反向（散户多 → 看空）
         retail_ls = sent.get("retail_ls_ratio", 1.0)
-        retail_score = _tanh_scale(-(retail_ls - 1.0), sensitivity=2.0)
+        retail_score = _tanh_scale(-(retail_ls - 1.0), sensitivity=self._sent_retail_sensitivity)
 
-        # 鲸鱼多空比 → 正向（跟鲸鱼）
         whale_ls = sent.get("whale_ls_ratio", 1.0)
-        whale_score = _tanh_scale((whale_ls - 1.0), sensitivity=2.0)
+        whale_score = _tanh_scale((whale_ls - 1.0), sensitivity=self._sent_whale_sensitivity)
 
-        # 加权：恐慌贪婪 30% + 反向散户 30% + 跟鲸鱼 40%
-        score = _clamp(fng_score * 0.3 + retail_score * 0.3 + whale_score * 0.4)
+        score = _clamp(fng_score * self._sent_fng_weight
+                       + retail_score * self._sent_retail_weight
+                       + whale_score * self._sent_whale_weight)
 
         label = sent.get("fear_greed_label", "Neutral")
         return FactorScore(
@@ -565,9 +600,8 @@ class SignalScorer:
         score = _clamp(alignment / 5.0)
 
         vol_trend = trend.get("volume_trend", "stable")
-        # 放量确认趋势
-        if vol_trend == "increasing" and abs(score) > 0.2:
-            score = _clamp(score * 1.2)
+        if vol_trend == "increasing" and abs(score) > self._trend_vol_threshold:
+            score = _clamp(score * self._trend_vol_boost)
 
         label = trend.get("trend_alignment", "mixed")
         return FactorScore("trend", round(score, 4), w, alignment, f"趋势一致性={label} 得分={alignment}")
@@ -582,15 +616,12 @@ class SignalScorer:
         vpin = vpin_data.get("vpin", 0)
         buy_ratio = vpin_data.get("last_bucket_buy_ratio", 0.5)
 
-        if vpin < 0.3:
-            # 低 VPIN → 市场平稳，无信号
+        if vpin < self._vpin_low_threshold:
             return FactorScore("vpin", 0.0, w, vpin, f"VPIN={vpin:.3f} 市场平稳")
 
-        # 高 VPIN 时，买入比例偏向哪边
-        direction = (buy_ratio - 0.5) * 2  # [-1, 1]
-        # VPIN 越高，方向信号越弱（不确定性高）
-        uncertainty_penalty = 1.0 - (vpin - 0.3) * 0.5  # [1.0 → 0.65]
-        score = _clamp(direction * uncertainty_penalty * 0.5)
+        direction = (buy_ratio - 0.5) * 2
+        uncertainty_penalty = 1.0 - (vpin - self._vpin_low_threshold) * self._vpin_penalty_rate
+        score = _clamp(direction * uncertainty_penalty * self._vpin_direction_scale)
 
         return FactorScore(
             "vpin", round(score, 4), w, vpin,
@@ -607,17 +638,14 @@ class SignalScorer:
         change = oi.get("oi_change_pct", 0)
         global_1h = oi.get("global_oi_change_1h", 0)
 
-        if abs(change) < 0.5 and abs(global_1h) < 0.5:
+        if abs(change) < self._oi_min_change and abs(global_1h) < self._oi_min_change:
             return FactorScore("oi", 0.0, w, change, f"OI变化 {change:.1f}% 无显著变化")
 
-        # OI 变化方向：上升 → 市场参与度增加，但需要价格方向确认
-        # 这里给一个弱信号：大幅上升 → 可能有行情（方向不定，给轻微正分）
-        score = _tanh_scale(change / 10, sensitivity=0.5)
+        score = _tanh_scale(change / 10, sensitivity=self._oi_sensitivity)
 
-        # 全网 1h 变化作为确认
-        if abs(global_1h) > 2:
-            global_boost = _tanh_scale(global_1h / 10, sensitivity=0.3)
-            score = _clamp(score * 0.6 + global_boost * 0.4)
+        if abs(global_1h) > self._oi_global_threshold:
+            global_boost = _tanh_scale(global_1h / 10, sensitivity=self._oi_global_sensitivity)
+            score = _clamp(score * self._oi_local_weight + global_boost * self._oi_global_weight)
 
         return FactorScore(
             "oi", round(score, 4), w, change,
@@ -645,18 +673,11 @@ class SignalScorer:
         if vwap_1h <= 0:
             return FactorScore("vwap", 0.0, w, 0.0, "VWAP 数据不足")
 
-        # 核心信号：偏离度的反向（均值回归）
-        # 价格高于 VWAP → negative score（看空回归）
-        # 但不能太极端 — 超强趋势中价格可以持续偏离
-        mean_reversion = _tanh_scale(-dev_15m / 0.5, sensitivity=1.0)
+        mean_reversion = _tanh_scale(-dev_15m / self._vwap_mr_divisor, sensitivity=self._vwap_mr_sensitivity)
 
-        # 趋势确认：短周期和长周期偏离方向一致 → 趋势更可信
-        # 这时候不做均值回归，而是顺势
-        if dev_5m * dev_1h > 0 and abs(dev_1h) > 0.3:
-            # 同向偏离且 1h 偏离超过 0.3% → 趋势模式
-            trend_score = _tanh_scale(dev_5m / 0.5, sensitivity=0.8)
-            # 混合：60% 均值回归 + 40% 趋势
-            score = _clamp(mean_reversion * 0.6 + trend_score * 0.4)
+        if dev_5m * dev_1h > 0 and abs(dev_1h) > self._vwap_trend_threshold:
+            trend_score = _tanh_scale(dev_5m / self._vwap_trend_divisor, sensitivity=self._vwap_trend_sensitivity)
+            score = _clamp(mean_reversion * self._vwap_mr_weight + trend_score * self._vwap_trend_weight)
         else:
             score = mean_reversion
 
@@ -684,20 +705,17 @@ class SignalScorer:
         poc_dev = vp.get("price_vs_poc_pct", 0)
         total_vol = vp.get("total_volume_usdt", 0)
 
-        if poc <= 0 or total_vol < 1000:
+        if poc <= 0 or total_vol < self._vp_min_volume:
             return FactorScore("volume_profile", 0.0, w, 0.0, "VP 数据不足")
 
         if in_va:
-            # 在价值区域内 → 弱信号，偏向 POC 方向（均值回归）
-            score = _tanh_scale(-poc_dev / 0.3, sensitivity=0.5)
+            score = _tanh_scale(-poc_dev / self._vp_va_divisor, sensitivity=self._vp_va_sensitivity)
             location = "价值区内"
         elif poc_dev > 0:
-            # 价格在 VAH 上方 → 突破阻力，看多
-            score = _tanh_scale(poc_dev / 0.5, sensitivity=1.0)
+            score = _tanh_scale(poc_dev / self._vp_breakout_divisor, sensitivity=self._vp_breakout_sensitivity)
             location = "突破VAH上方"
         else:
-            # 价格在 VAL 下方 → 跌破支撑，看空
-            score = _tanh_scale(poc_dev / 0.5, sensitivity=1.0)
+            score = _tanh_scale(poc_dev / self._vp_breakout_divisor, sensitivity=self._vp_breakout_sensitivity)
             location = "跌破VAL下方"
 
         return FactorScore(
@@ -727,9 +745,8 @@ class SignalScorer:
         # 净吸收方向 → 直接作为分数
         score = _clamp(net)
 
-        # 频繁吸收事件加成（5 分钟内事件越多，信号越强）
-        if events >= 3:
-            event_boost = min(events * 0.05, 0.3)
+        if events >= self._abs_event_threshold:
+            event_boost = min(events * self._abs_event_boost_rate, self._abs_event_boost_max)
             if score > 0:
                 score = _clamp(score + event_boost)
             elif score < 0:

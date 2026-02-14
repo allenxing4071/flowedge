@@ -32,7 +32,10 @@ from __future__ import annotations
 import logging
 import time as _time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flowedge.optimizer.param_registry import ParamRegistry
 
 logger = logging.getLogger("flowedge.gate")
 
@@ -62,9 +65,9 @@ class GateResult:
     location: LayerResult = field(default_factory=lambda: LayerResult("location", False, "未评估"))
     behavior: LayerResult = field(default_factory=lambda: LayerResult("behavior", False, "未评估"))
     direction: LayerResult = field(default_factory=lambda: LayerResult("direction", False, "未评估"))
-    # 动态止损止盈建议（基于 VP 结构）
-    suggested_stop_loss_pct: float = 2.0   # 默认回退值
-    suggested_take_profit_pct: float = 1.5
+    # 动态止损止盈建议（基于 VP 结构，默认值由 _calc_dynamic_sl_tp 从 Registry 覆盖）
+    suggested_stop_loss_pct: float = 0.0
+    suggested_take_profit_pct: float = 0.0
     # 门卫拒绝原因（第一个不通过的层）
     reject_layer: str = ""
     reject_reason: str = ""
@@ -74,48 +77,54 @@ class GateResult:
 
 @dataclass
 class GateConfig:
-    """门卫配置参数"""
+    """
+    门卫配置参数 — 所有值由 ParamRegistry 注入，无硬编码默认值。
+
+    构建方式：EntryGate.__init__(registry=...) → _config_from_registry()
+    """
     # Layer 1: 环境分类
-    trending_min_alignment: float = 3.0      # |alignment_score| >= 3 判定趋势
-    ranging_max_alignment: float = 1.0       # |alignment_score| <= 1 判定震荡
-    extreme_band_width: float = 2.0          # band_width > 2% 判定极端
-    breakout_min_alignment: float = 2.0      # 突破需要 |alignment_score| >= 2
+    trending_min_alignment: float = 0.0
+    ranging_max_alignment: float = 0.0
+    extreme_band_width: float = 0.0
+    breakout_min_alignment: float = 0.0
 
     # Layer 2: 位置过滤
-    vwap_near_pct: float = 0.3              # 价格距 VWAP < 0.3% 视为"附近"
-    poc_near_pct: float = 0.15              # 价格距 POC < 0.15% 视为"附近"
-    va_edge_threshold: float = 0.1          # value_area_pct < 0.1 或 > 0.9 视为"边界"
-    hvn_near_pct: float = 0.2              # 价格距 HVN < 0.2% 视为"附近"
-    vwap_band_near_pct: float = 0.15       # 价格距 VWAP 带边界 < 0.15%
+    vwap_near_pct: float = 0.0
+    poc_near_pct: float = 0.0
+    va_edge_threshold: float = 0.0
+    hvn_near_pct: float = 0.0
+    vwap_band_near_pct: float = 0.0
 
     # Layer 3: 行为确认
-    min_absorption_events: int = 3          # 5 分钟内 >= 3 次吸收事件也算确认
-    min_large_trade_flow: float = 50000     # 大单净流入 >= $50k 算确认
+    min_absorption_events: int = 0
+    min_large_trade_flow: float = 0.0
 
     # Layer 4: 方向确认
-    min_score: float = 0.30                 # |score| >= 0.30
-    min_confidence: float = 0.50            # confidence >= 0.50（比旧值 0.40 更严格）
+    min_score: float = 0.0
+    min_confidence: float = 0.0
 
-    # Layer 0: 30 分钟节点过滤
-    time_filter_enabled: bool = True        # 是否启用 30 分钟节点过滤
-    time_filter_minutes_before: int = 5     # 整点前 N 分钟禁止入场
-    time_filter_minutes_after: int = 2      # 整点后 N 分钟禁止入场（等待方向明确）
+    # Layer 0: 30 分钟节点过滤（布尔/整数参数，从 Registry 读取）
+    time_filter_enabled: bool = True
+    time_filter_minutes_before: int = 5
+    time_filter_minutes_after: int = 2
 
-    # 南哥打法：先开单再缩紧时跳过 L3（吸收/假墙/大单），仅用 L1/L2/L4 跟随+判断方向
+    # 南哥打法：跳过 L3（布尔参数，从 Registry 读取）
     skip_behavior_layer: bool = False
 
     # 动态止损
-    max_stop_loss_pct: float = 2.0          # 最大止损（兜底）
-    min_stop_loss_pct: float = 0.3          # 最小止损（防止太紧）
-    stop_loss_buffer_pct: float = 0.1       # 止损位额外缓冲
+    max_stop_loss_pct: float = 0.0
+    min_stop_loss_pct: float = 0.0
+    stop_loss_buffer_pct: float = 0.0
 
 
 class EntryGate:
     """
     入场门卫：四层过滤，全部通过才允许交易。
 
+    所有参数从 ParamRegistry 读取，支持热更新，无硬编码默认值。
+
     用法：
-        gate = EntryGate()
+        gate = EntryGate(registry=param_registry)
         result = gate.evaluate(features, composite_signal)
         if result.passed:
             # 发出入场信号
@@ -123,8 +132,62 @@ class EntryGate:
             # 保持 NEUTRAL
     """
 
-    def __init__(self, config: Optional[GateConfig] = None):
-        self.config = config or GateConfig()
+    def __init__(self, registry: "ParamRegistry"):
+        if not registry:
+            raise ValueError("EntryGate 必须传入 ParamRegistry，禁止无 Registry 运行")
+        self._registry = registry
+        self.config = self._config_from_registry(registry)
+        self._sync_gate_extra_params(registry)
+        registry.subscribe(self._on_params_updated)
+
+    def _sync_gate_extra_params(self, reg: "ParamRegistry") -> None:
+        """从 Registry 读取门卫内部补充参数"""
+        self._strong_buy_threshold = reg.get("gate_signal_strong_buy")
+        self._strong_sell_threshold = reg.get("gate_signal_strong_sell")
+        self._default_take_profit_pct = reg.get("gate_default_take_profit_pct")
+        self._min_take_profit_pct = reg.get("gate_min_take_profit_pct")
+        self._ranging_max_tp_pct = reg.get("gate_ranging_max_tp_pct")
+        self._trending_min_band_width = reg.get("gate_trending_min_band_width")
+        self._ranging_min_absorption = int(reg.get("gate_ranging_min_absorption"))
+
+    @staticmethod
+    def _config_from_registry(registry: "ParamRegistry") -> GateConfig:
+        """从 ParamRegistry 构建 GateConfig — 所有参数均从 Registry 读取"""
+        return GateConfig(
+            # Layer 1: 环境分类
+            trending_min_alignment=registry.get("gate_trending_min_alignment"),
+            ranging_max_alignment=registry.get("gate_ranging_max_alignment"),
+            extreme_band_width=registry.get("gate_extreme_band_width"),
+            breakout_min_alignment=registry.get("gate_breakout_min_alignment"),
+            # Layer 2: 位置过滤
+            vwap_near_pct=registry.get("gate_vwap_near_pct"),
+            poc_near_pct=registry.get("gate_poc_near_pct"),
+            va_edge_threshold=registry.get("gate_va_edge_threshold"),
+            hvn_near_pct=registry.get("gate_hvn_near_pct"),
+            vwap_band_near_pct=registry.get("gate_vwap_band_near_pct"),
+            # Layer 3: 行为确认
+            min_absorption_events=int(registry.get("gate_min_absorption_events")),
+            min_large_trade_flow=registry.get("gate_min_large_trade_flow"),
+            # Layer 4: 方向确认
+            min_score=registry.get("gate_min_score"),
+            min_confidence=registry.get("gate_min_confidence"),
+            # Layer 0: 时间节点过滤
+            time_filter_enabled=bool(int(registry.get("gate_time_filter_enabled"))),
+            time_filter_minutes_before=int(registry.get("gate_time_filter_minutes_before")),
+            time_filter_minutes_after=int(registry.get("gate_time_filter_minutes_after")),
+            # 南哥打法
+            skip_behavior_layer=bool(int(registry.get("gate_skip_behavior_layer"))),
+            # 动态止损
+            max_stop_loss_pct=registry.get("gate_max_stop_loss_pct"),
+            min_stop_loss_pct=registry.get("gate_min_stop_loss_pct"),
+            stop_loss_buffer_pct=registry.get("gate_stop_loss_buffer_pct"),
+        )
+
+    def _on_params_updated(self, all_values: dict[str, float]) -> None:
+        """ParamRegistry 参数变更回调 — 热更新门卫配置和内部参数"""
+        if self._registry:
+            self.config = self._config_from_registry(self._registry)
+            self._sync_gate_extra_params(self._registry)
 
     def evaluate(self, features: dict, signal: object) -> GateResult:
         """
@@ -192,9 +255,9 @@ class EntryGate:
         result.side = suggested_side
 
         if suggested_side == "LONG":
-            result.signal = "STRONG_BUY" if signal.score >= 0.40 else "BUY"
+            result.signal = "STRONG_BUY" if signal.score >= self._strong_buy_threshold else "BUY"
         elif suggested_side == "SHORT":
-            result.signal = "STRONG_SELL" if signal.score <= -0.40 else "SELL"
+            result.signal = "STRONG_SELL" if signal.score <= self._strong_sell_threshold else "SELL"
 
         # 计算动态止损止盈
         sl, tp = self._calc_dynamic_sl_tp(features, suggested_side, regime)
@@ -288,7 +351,7 @@ class EntryGate:
             )
 
         # 趋势环境
-        if alignment >= cfg.trending_min_alignment and band_width > 0.5:
+        if alignment >= cfg.trending_min_alignment and band_width > self._trending_min_band_width:
             return LayerResult(
                 "regime", True,
                 f"趋势环境 alignment={alignment:.1f} band_width={band_width:.2f}%",
@@ -640,44 +703,38 @@ class EntryGate:
         hvn_above = vp.get("hvn_above", 0)
         hvn_below = vp.get("hvn_below", 0)
 
-        # 默认值
         stop_loss = cfg.max_stop_loss_pct
-        take_profit = 1.5
+        take_profit = self._default_take_profit_pct
 
         if current_price <= 0:
             return stop_loss, take_profit
 
         if side == "LONG":
-            # 止损：VAL 下方（或 HVN 下方）
             if val_price > 0:
                 sl_from_val = (current_price - val_price) / current_price * 100 + cfg.stop_loss_buffer_pct
                 stop_loss = max(cfg.min_stop_loss_pct, min(sl_from_val, cfg.max_stop_loss_pct))
 
-            # 止盈：VAH 或上方 HVN
             if hvn_above > 0 and hvn_above > current_price:
                 tp_to_hvn = (hvn_above - current_price) / current_price * 100
-                take_profit = max(0.5, tp_to_hvn)
+                take_profit = max(self._min_take_profit_pct, tp_to_hvn)
             elif vah_price > 0 and vah_price > current_price:
                 tp_to_vah = (vah_price - current_price) / current_price * 100
-                take_profit = max(0.5, tp_to_vah)
+                take_profit = max(self._min_take_profit_pct, tp_to_vah)
 
         elif side == "SHORT":
-            # 止损：VAH 上方
             if vah_price > 0:
                 sl_from_vah = (vah_price - current_price) / current_price * 100 + cfg.stop_loss_buffer_pct
                 stop_loss = max(cfg.min_stop_loss_pct, min(sl_from_vah, cfg.max_stop_loss_pct))
 
-            # 止盈：VAL 或下方 HVN
             if hvn_below > 0 and hvn_below < current_price:
                 tp_to_hvn = (current_price - hvn_below) / current_price * 100
-                take_profit = max(0.5, tp_to_hvn)
+                take_profit = max(self._min_take_profit_pct, tp_to_hvn)
             elif val_price > 0 and val_price < current_price:
                 tp_to_val = (current_price - val_price) / current_price * 100
-                take_profit = max(0.5, tp_to_val)
+                take_profit = max(self._min_take_profit_pct, tp_to_val)
 
-        # 震荡环境止盈更保守（目标是 POC 附近）
         if regime == "ranging":
-            take_profit = min(take_profit, 1.0)
+            take_profit = min(take_profit, self._ranging_max_tp_pct)
 
         return round(stop_loss, 3), round(take_profit, 3)
 

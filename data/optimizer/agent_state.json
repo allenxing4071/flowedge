@@ -1,0 +1,40 @@
+{
+  "day_key": "2026-02-14",
+  "calls_today": 0,
+  "est_cost_today_usd": 0.0,
+  "last_run_at": "2026-02-14T04:51:38.518800Z",
+  "last_error": "",
+  "last_plan": {
+    "action": "hold",
+    "reason": "样本不足: 0 < 60",
+    "source": "rule",
+    "config": {},
+    "need_external_research": false,
+    "research_queries": [],
+    "confidence": 1.0,
+    "context": {
+      "total_records": 0,
+      "goal": "auto_optimize"
+    }
+  },
+  "last_result": {
+    "started_at": "2026-02-14T04:51:38.518800Z",
+    "goal": "auto_optimize",
+    "dry_run": true,
+    "plan": {
+      "action": "hold",
+      "reason": "样本不足: 0 < 60",
+      "source": "rule",
+      "config": {},
+      "need_external_research": false,
+      "research_queries": [],
+      "confidence": 1.0,
+      "context": {
+        "total_records": 0,
+        "goal": "auto_optimize"
+      }
+    },
+    "executed": false,
+    "status": "planned"
+  }
+}

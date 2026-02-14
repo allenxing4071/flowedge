@@ -69,8 +69,9 @@ class FeatureEngine:
     新增可视化数据层：Tape / Footprint / 冰山单检测。
     """
 
-    def __init__(self):
+    def __init__(self, registry=None):
         self._symbols = cfg.WATCH_SYMBOLS
+        self._registry = registry
 
         # ── 每个币种一套计算器（11 个） ──
         self._cvd: dict = {}
@@ -108,20 +109,44 @@ class FeatureEngine:
         self._init_calculators()
 
     def _init_calculators(self) -> None:
-        """为每个监控币种初始化 17 个特征计算器"""
+        """为每个监控币种初始化 17 个特征计算器，参数从 Registry 读取"""
+        reg = self._registry
+        # 从 Registry 读取特征参数（如有），否则用 config.py 兜底（仅限非优化参数）
+        if reg:
+            vpin_bucket = reg.get("feat_vpin_bucket_size")
+            vpin_buckets = int(reg.get("feat_vpin_num_buckets"))
+            lt_threshold = reg.get("feat_large_trade_threshold")
+            lt_window = int(reg.get("feat_large_trade_window_ms"))
+            ofi_levels = int(reg.get("feat_ofi_levels"))
+            ofi_capacity = int(reg.get("feat_ofi_capacity"))
+            cvd_capacity = int(reg.get("feat_cvd_capacity"))
+            liq_window = int(reg.get("feat_liq_window_5m_ms"))
+            funding_history = int(reg.get("feat_funding_history_size"))
+        else:
+            vpin_bucket = cfg.VPIN_BUCKET_SIZE
+            vpin_buckets = cfg.VPIN_NUM_BUCKETS
+            lt_threshold = cfg.LARGE_TRADE_THRESHOLD
+            lt_window = 30000
+            ofi_levels = 5
+            ofi_capacity = 90000
+            cvd_capacity = 60000
+            liq_window = 300000
+            funding_history = 300
+
         for symbol in self._symbols:
-            self._cvd[symbol] = CVDCalculator()
-            self._ofi[symbol] = OFICalculator()
+            self._cvd[symbol] = CVDCalculator(capacity=cvd_capacity)
+            self._ofi[symbol] = OFICalculator(levels=ofi_levels, capacity=ofi_capacity)
             self._vpin[symbol] = VPINCalculator(
-                bucket_size=cfg.VPIN_BUCKET_SIZE,
-                num_buckets=cfg.VPIN_NUM_BUCKETS,
+                bucket_size=vpin_bucket,
+                num_buckets=vpin_buckets,
             )
             self._large[symbol] = LargeTradeDetector(
-                threshold_usdt=cfg.LARGE_TRADE_THRESHOLD,
+                threshold_usdt=lt_threshold,
+                window_ms=lt_window,
             )
             self._depth_change[symbol] = DepthChangeDetector()
-            self._funding[symbol] = FundingRateTracker()
-            self._liquidation[symbol] = LiquidationTracker()
+            self._funding[symbol] = FundingRateTracker(history_size=funding_history)
+            self._liquidation[symbol] = LiquidationTracker(window_5m=liq_window)
             self._oi[symbol] = OITracker()
             self._sentiment[symbol] = SentimentTracker()
             self._trend[symbol] = TrendTracker()
@@ -130,7 +155,7 @@ class FeatureEngine:
             self._absorption[symbol] = AbsorptionDetector()
             # 可视化数据层
             self._tape[symbol] = TapeBuffer(
-                large_threshold_usdt=cfg.LARGE_TRADE_THRESHOLD,
+                large_threshold_usdt=lt_threshold,
             )
             self._footprint[symbol] = FootprintAggregator()
             self._iceberg[symbol] = IcebergDetector(

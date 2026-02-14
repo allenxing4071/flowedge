@@ -12,6 +12,7 @@
 
 import { useState, useCallback } from 'react';
 import { usePolling } from '@/lib/hooks';
+import { Modal } from '@/lib/modal';
 import {
   fetchPaperStatus,
   fetchPaperTrades,
@@ -542,7 +543,12 @@ export default function PaperTradingPanel() {
   const { data: signalLog } = usePolling<SignalLogEntry[]>(signalLogFetcher, 4000);
 
   const handleReset = async () => {
-    if (!confirm('确认重置纸盘账户？所有模拟交易记录将被清除，初始资金恢复为 $10,000。')) return;
+    const ok = await Modal.danger({
+      title: '确认重置',
+      content: '确认重置纸盘账户？所有模拟交易记录将被清除，初始资金恢复为 $10,000。',
+      okText: '确认重置',
+    });
+    if (!ok) return;
     setResetting(true);
     try {
       await resetPaperAccount();

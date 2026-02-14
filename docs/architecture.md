@@ -270,7 +270,40 @@ cd /opt/FlowEdge && docker compose up -d --build
 
 ---
 
-## 7. 速率限制体系
+## 7. 开发与测试
+
+### 7.1 测试结构
+
+```
+tests/
+├── conftest.py         # pytest fixture（TestClient、测试用环境变量）
+├── test_features.py    # 特征计算单元测试（RingBuffer/CVD/OFI/VPIN/LargeTrade）
+├── test_api.py         # API 端点测试（/health、/status 等）
+└── test_rate_limiter.py # 速率限制器单元测试
+```
+
+### 7.2 运行测试
+
+```bash
+cd ~/Documents/soft/FlowEdge
+python3 -m pytest tests/ -v
+```
+
+### 7.3 测试策略
+
+- **单元测试**：特征计算器、RingBuffer、RateLimiter 等纯逻辑，无 IO
+- **API 测试**：使用 `httpx.TestClient`，测试环境会触发「演示模式」（不启动 WS/REST）
+- **功能验证**：按 R1 执行阶段 A（接口快验）+ 阶段 B（页面/完整验证）
+
+### 7.4 相关 Skill
+
+| 用户意图 | 执行 Skill |
+|---|---|
+| 开发/测试/pytest/写测试 | `.skills/开发测试/SKILL.md` |
+
+---
+
+## 8. 速率限制体系
 
 ### Token Bucket 算法
 
@@ -305,7 +338,7 @@ Coinglass: N × 3 接口 = 3N 次/5分钟
 
 ---
 
-## 8. 配置参数
+## 9. 配置参数
 
 ### .env 配置项
 
@@ -320,7 +353,7 @@ Coinglass: N × 3 接口 = 3N 次/5分钟
 
 ---
 
-## 9. 经验沉淀
+## 10. 经验沉淀
 
 ### Python 兼容性
 - `dataclass(slots=True)` 仅 3.10+，已全部移除
@@ -340,7 +373,7 @@ Coinglass: N × 3 接口 = 3N 次/5分钟
 
 ---
 
-## 10. 核心文件索引
+## 11. 核心文件索引
 
 | 文件 | 用途 | 关联 Rules | 关联 Skill |
 |---|---|---|---|
@@ -369,3 +402,4 @@ Coinglass: N × 3 接口 = 3N 次/5分钟
 | `flowedge/features/sentiment.py` | 情绪综合 | R0 | 特征工程 |
 | `flowedge/features/trend.py` | 趋势上下文 | R0 | 特征工程 |
 | `scripts/deploy-flowedge.sh` | 部署脚本 | R6 | 部署运维 |
+| `tests/*.py` | 单元/API 测试 | R1 | 开发测试 |

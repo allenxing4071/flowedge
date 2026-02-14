@@ -1,6 +1,9 @@
 """
 FlowEdge 配置管理
-从 .env 读取所有配置，提供统一访问入口。
+从 .env 读取基础配置（API 密钥、币种、模式开关等），提供统一访问入口。
+
+注意：纸盘/门卫/信号等可优化参数已全部迁移到 ParamRegistry（唯一数据源），
+不再在此文件中定义。通过 API 热更新：PUT /optimizer/params
 """
 
 from __future__ import annotations
@@ -33,10 +36,8 @@ class Config:
         if s.strip()
     ]
 
-    # ── 大单阈值（USDT） ──
+    # ── 特征参数（已迁移到 ParamRegistry，此处仅作 env 兼容兜底） ──
     LARGE_TRADE_THRESHOLD: float = float(os.getenv("LARGE_TRADE_THRESHOLD", "50000"))
-
-    # ── VPIN 参数 ──
     VPIN_BUCKET_SIZE: float = float(os.getenv("VPIN_BUCKET_SIZE", "100000"))
     VPIN_NUM_BUCKETS: int = int(os.getenv("VPIN_NUM_BUCKETS", "50"))
 
@@ -61,18 +62,10 @@ class Config:
     EQUITY_LOOP_S: int = 30 if HIGH_FREQ_MODE else 60              # 纸盘资金曲线
     REST_POLL_INTERVAL_S: int = 120 if HIGH_FREQ_MODE else 300     # 中频 REST 轮询（Coinglass/币安 OI 等）
     EXTERNAL_CHECK_S: int = 30 if HIGH_FREQ_MODE else 60           # 外部数据检查周期
-    PAPER_MIN_HOLD_S: float = 120.0 if HIGH_FREQ_MODE else 300.0  # 纸盘最低持仓时间（秒）
-    PAPER_MIN_HOLD_WRONG_S: float = float(os.getenv("PAPER_MIN_HOLD_WRONG_S", "45"))  # NEUTRAL 且浮亏时最短持仓秒数（45s 给做市商战略亏损一点时间，避免秒平）
 
-    # ── 放开/缩紧：默认缩紧版（提高胜率、减少低质量单），需放开时用 env 调小 ──
-    PAPER_MIN_CONFIDENCE: float = float(os.getenv("PAPER_MIN_CONFIDENCE", "0.35"))   # 纸盘最低置信度（缩紧 0.35，减少低置信开仓）
-    PAPER_MIN_ENTRY_SCORE: float = float(os.getenv("PAPER_MIN_ENTRY_SCORE", "0.15"))  # 纸盘最低评分绝对值（缩紧 0.15，只进强信号）
-    PAPER_COOLDOWN_S: float = float(os.getenv("PAPER_COOLDOWN_S", "45"))             # 开仓冷却秒（缩紧 45，降频）
-    GATE_MIN_SCORE: float = float(os.getenv("GATE_MIN_SCORE", "0.15"))               # 门卫最低 |score|（缩紧 0.15）
-    GATE_MIN_CONFIDENCE: float = float(os.getenv("GATE_MIN_CONFIDENCE", "0.35"))     # 门卫最低置信度（缩紧 0.35）
-    GATE_TIME_FILTER_ENABLED: bool = os.getenv("GATE_TIME_FILTER_ENABLED", "false").lower() in ("true", "1", "yes")  # 30 分钟节点过滤（放开时关）
-    # 南哥打法 = 四层全做（含 L3 吸收/假墙/大单）。仅临时“先开单”调试时可设为 true 跳过 L3
-    GATE_SKIP_BEHAVIOR_LAYER: bool = os.getenv("GATE_SKIP_BEHAVIOR_LAYER", "false").lower() in ("true", "1", "yes")
+    # ── 纸盘/门卫/信号等可优化参数已全部迁移到 ParamRegistry ──
+    # 不再在此定义 PAPER_*/GATE_* 常量
+    # 查看/修改参数：GET/PUT /optimizer/params
 
     @classmethod
     def validate(cls) -> list[str]:

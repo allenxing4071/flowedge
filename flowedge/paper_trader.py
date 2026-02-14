@@ -40,8 +40,6 @@ from typing import Optional
 
 import aiohttp
 
-from .config import cfg
-
 logger = logging.getLogger("flowedge.paper")
 
 # 币安标记价格 API
@@ -110,23 +108,26 @@ class PaperTrade:
 
 @dataclass
 class PaperConfig:
-    """纸盘交易配置"""
+    """
+    纸盘交易配置 — 所有值由 ParamRegistry 注入，无硬编码默认值。
+
+    构建方式：PaperTrader.__init__(registry=...) → _sync_from_registry()
+    """
     enabled: bool = True
-    initial_balance: float = 10000.0    # 初始资金 USDT
-    leverage: int = 10                   # 默认杠杆
-    position_pct: float = 10.0           # 单仓占比 %（占总资产）
-    stop_loss_pct: float = 2.0           # 止损 %（价格变动，10x 杠杆 = 20% 保证金亏损）
-    take_profit_pct: float = 1.5         # 固定止盈 %（价格变动，10x 杠杆 = 15% 保证金盈利）
-    trailing_activate_pct: float = 0.8   # 追踪止盈激活 %（价格涨 0.8% 后启动追踪）
-    trailing_callback_pct: float = 40.0  # 追踪止盈回撤比例 %（从最高盈利回撤 40% 时平仓）
-    slippage_pct: float = 0.02           # 模拟滑点 %（BTC/ETH 主流币实际约 0.01-0.02%）
-    fee_pct: float = 0.02               # 单边手续费 %（币安 maker 0.02%，保守取 0.02%）
-    cooldown_s: float = 120.0            # 开仓冷却期（秒），防止 whipsaw 连续反转
-    min_hold_s: float = 300.0            # 最低持仓时间（秒），NEUTRAL 且「对了」时拿住用
-    min_hold_wrong_s: float = 15.0      # 「错了马上出」：NEUTRAL 且浮亏时，持仓≥此秒数即可平
-    # 触发条件
-    min_confidence: float = 0.40         # 最低置信度（过滤低一致性信号）
-    min_entry_score: float = 0.30        # 最低入场评分绝对值（只进强信号单）
+    initial_balance: float = 10000.0    # 初始资金 USDT（非优化参数，固定）
+    leverage: int = 0
+    position_pct: float = 0.0
+    stop_loss_pct: float = 0.0
+    take_profit_pct: float = 0.0
+    trailing_activate_pct: float = 0.0
+    trailing_callback_pct: float = 0.0
+    slippage_pct: float = 0.0
+    fee_pct: float = 0.0
+    cooldown_s: float = 0.0
+    min_hold_s: float = 0.0
+    min_hold_wrong_s: float = 0.0
+    min_confidence: float = 0.0
+    min_entry_score: float = 0.0
     entry_signals: list = field(default_factory=lambda: [
         "STRONG_BUY", "BUY", "STRONG_SELL", "SELL"
     ])
@@ -158,15 +159,15 @@ class PaperStats:
 # ═══════════════════════════════════════════
 
 class PaperTrader:
-    """纸盘交易引擎"""
+    """纸盘交易引擎 — 所有参数从 ParamRegistry 读取，无硬编码。"""
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, registry, db_path: Optional[Path] = None):
+        if not registry:
+            raise ValueError("PaperTrader 必须传入 registry（ParamRegistry），所有参数由 Registry 统一管理")
         self.config = PaperConfig()
-        self.config.min_hold_s = cfg.PAPER_MIN_HOLD_S  # 高频模式 120s，默认 300s
-        self.config.min_hold_wrong_s = cfg.PAPER_MIN_HOLD_WRONG_S  # 错了马上出：NEUTRAL 且浮亏时最短 15s
-        self.config.min_confidence = cfg.PAPER_MIN_CONFIDENCE   # 放开 0.15，缩紧时调大
-        self.config.min_entry_score = cfg.PAPER_MIN_ENTRY_SCORE   # 放开 0.05，缩紧时调大
-        self.config.cooldown_s = cfg.PAPER_COOLDOWN_S             # 放开 30s，缩紧时调大
+        self._registry = registry
+        self._sync_from_registry(registry)
+        registry.subscribe(self._on_params_updated)
         self._db_path = db_path or (Path("data") / "paper_trades.db")
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -182,6 +183,35 @@ class PaperTrader:
         # 初始化数据库
         self._init_db()
         self._load_state()
+
+    # ──────────────────────────────────────
+    # ParamRegistry 热更新
+    # ──────────────────────────────────────
+
+    def _sync_from_registry(self, registry) -> None:
+        """从 ParamRegistry 同步纸盘参数（启动 + 热更新时调用）"""
+        self.config.leverage = int(registry.get("paper_leverage"))
+        self.config.position_pct = registry.get("paper_position_pct")
+        self.config.stop_loss_pct = registry.get("paper_stop_loss_pct")
+        self.config.take_profit_pct = registry.get("paper_take_profit_pct")
+        self.config.trailing_activate_pct = registry.get("paper_trailing_activate_pct")
+        self.config.trailing_callback_pct = registry.get("paper_trailing_callback_pct")
+        self.config.slippage_pct = registry.get("paper_slippage_pct")
+        self.config.fee_pct = registry.get("paper_fee_pct")
+        self.config.cooldown_s = registry.get("paper_cooldown_s")
+        self.config.min_hold_s = registry.get("paper_min_hold_s")
+        self.config.min_confidence = registry.get("paper_min_confidence")
+        self.config.min_entry_score = registry.get("paper_min_entry_score")
+        self.config.min_hold_wrong_s = registry.get("paper_min_hold_wrong_s")
+
+    def _on_params_updated(self, all_values: dict) -> None:
+        """ParamRegistry 参数变更回调 — 热更新纸盘配置"""
+        if self._registry:
+            self._sync_from_registry(self._registry)
+            logger.info(
+                f"[纸盘] 参数热更新: confidence≥{self.config.min_confidence}, "
+                f"|score|≥{self.config.min_entry_score}, cooldown={self.config.cooldown_s}s"
+            )
 
     # ──────────────────────────────────────
     # 信号决策日志
@@ -703,15 +733,18 @@ class PaperTrader:
         else:
             gross_pnl = (pos.entry_price - exit_price) * pos.quantity
 
-        # 平仓手续费
-        fee = pos.notional * self.config.fee_pct / 100
+        # 手续费（开仓+平仓双向）— 修复：之前 net_pnl 只减了平仓费，漏算了开仓费
+        open_fee = pos.notional * self.config.fee_pct / 100
+        close_fee = pos.notional * self.config.fee_pct / 100
+        fee = open_fee + close_fee
         slippage_cost = pos.notional * self.config.slippage_pct / 100 * 2  # 开+平
 
         net_pnl = gross_pnl - fee
         net_pnl_pct = net_pnl / pos.margin * 100 if pos.margin else 0
 
-        # 更新余额
-        self._balance += pos.margin + net_pnl
+        # 更新余额：归还保证金 + 补回开仓时预扣的 open_fee + net_pnl（已含双向费用）
+        # 这样 balance 在会话内和重启后（initial + sum(net_pnl)）都保持一致
+        self._balance += pos.margin + open_fee + net_pnl
         del self._positions[symbol]
         self._save_state()
 

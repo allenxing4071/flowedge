@@ -24,7 +24,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import orjson
 
@@ -32,8 +32,10 @@ from .scorer import SignalScorer, CompositeSignal
 from .detector import AnomalyDetector, AnomalySnapshot, AnomalyEvent
 from .tracker import SignalTracker
 from .pusher import SignalPusher
-from .entry_gate import EntryGate, GateResult, GateConfig
-from ..config import cfg
+from .entry_gate import EntryGate, GateResult
+
+if TYPE_CHECKING:
+    from ..optimizer.param_registry import ParamRegistry
 
 logger = logging.getLogger("flowedge.signals")
 
@@ -79,16 +81,15 @@ class SignalEngine:
         tracker: Optional[SignalTracker] = None,
         gate: Optional[EntryGate] = None,
         history_size: int = 500,
+        registry: Optional["ParamRegistry"] = None,
     ):
-        self.scorer = scorer or SignalScorer()
-        self.detector = detector or AnomalyDetector()
+        # 所有子组件从 ParamRegistry 读取参数（唯一数据源，支持热更新）
+        if not registry:
+            raise ValueError("SignalEngine 必须传入 registry（ParamRegistry），所有参数由 Registry 统一管理")
+        self.scorer = scorer or SignalScorer(registry=registry)
+        self.detector = detector or AnomalyDetector(registry=registry)
+        self.gate = gate or EntryGate(registry=registry)
         self.tracker = tracker or SignalTracker()
-        self.gate = gate or EntryGate(config=GateConfig(
-            min_score=cfg.GATE_MIN_SCORE,
-            min_confidence=cfg.GATE_MIN_CONFIDENCE,
-            time_filter_enabled=cfg.GATE_TIME_FILTER_ENABLED,
-            skip_behavior_layer=cfg.GATE_SKIP_BEHAVIOR_LAYER,
-        ))
         self.pusher = SignalPusher()
         self.paper_trader = None  # 由 api.py 在 lifespan 中注入
 
@@ -266,9 +267,13 @@ class SignalEngine:
                     f"risk={anomalies.risk_level})"
                 )
                 # 异步触发信号追踪 + 半自动推送（不阻塞评估循环）
+                # 传入因子明细和市场环境，供优化系统回测使用
+                _current_regime = getattr(self.scorer, '_current_regime', None)
                 _track_task = asyncio.ensure_future(
                     self.tracker.on_signal_change(
-                        symbol, signal.signal, signal.score, signal.confidence
+                        symbol, signal.signal, signal.score, signal.confidence,
+                        factors=signal.factors,
+                        regime=_current_regime,
                     )
                 )
                 _push_task = asyncio.ensure_future(
