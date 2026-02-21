@@ -185,18 +185,50 @@ class FlowEdgeOptimizer:
         )
         self._current_study = study
 
+        # 用时间切分构建"训练内样本外"评分，降低纯 in-sample 过拟合概率。
+        split = self._data_manager.time_split(
+            records=records,
+            train_pct=0.7,
+            val_pct=0.0,
+            test_pct=0.3,
+        )
+        objective_train = split.train if len(split.train) >= 30 else records
+        objective_oos = split.test if split.test and len(split.test) >= 20 else records
+        use_oos_objective = objective_oos is not records
+
         def objective(trial: optuna.Trial) -> float:
             params = self._sample_params(trial, search_space, config.normalize_weights)
-            result = self._backtester.run(records, params=params, config=config.backtest_config)
+            train_result = self._backtester.run(objective_train, params=params, config=config.backtest_config)
+            oos_result = self._backtester.run(objective_oos, params=params, config=config.backtest_config)
+
+            # 交易数太少的试验容易制造虚高指标，直接惩罚。
+            if oos_result.traded_signals < 12:
+                return -1e6
 
             # 记录额外指标（用于分析）
-            trial.set_user_attr("win_rate", result.metrics.win_rate)
-            trial.set_user_attr("total_pnl_pct", result.metrics.total_pnl_pct)
-            trial.set_user_attr("max_drawdown_pct", result.metrics.max_drawdown_pct)
-            trial.set_user_attr("profit_factor", result.metrics.profit_factor)
-            trial.set_user_attr("traded_signals", result.traded_signals)
+            trial.set_user_attr("win_rate", oos_result.metrics.win_rate)
+            trial.set_user_attr("total_pnl_pct", oos_result.metrics.total_pnl_pct)
+            trial.set_user_attr("max_drawdown_pct", oos_result.metrics.max_drawdown_pct)
+            trial.set_user_attr("profit_factor", oos_result.metrics.profit_factor)
+            trial.set_user_attr("traded_signals", oos_result.traded_signals)
+            trial.set_user_attr("objective_use_oos", use_oos_objective)
 
-            return getattr(result.metrics, config.objective_metric, 0)
+            score = getattr(oos_result.metrics, config.objective_metric, 0)
+            if config.objective_metric == "max_drawdown_pct":
+                score = -abs(score)
+
+            # 负收益与明显过拟合时降分，优先选择更稳健参数。
+            if oos_result.metrics.total_pnl_pct < 0:
+                score -= abs(oos_result.metrics.total_pnl_pct) * 0.2
+
+            train_sharpe = train_result.metrics.sharpe_ratio
+            oos_sharpe = oos_result.metrics.sharpe_ratio
+            if train_sharpe > 0 and oos_sharpe < train_sharpe:
+                decay = 1 - (oos_sharpe / train_sharpe)
+                if decay > 0.2:
+                    score -= (decay - 0.2) * 2.0
+
+            return float(score)
 
         study.optimize(objective, n_trials=config.n_trials, timeout=config.timeout_s)
 

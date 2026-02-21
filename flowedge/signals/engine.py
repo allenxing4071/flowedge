@@ -756,7 +756,7 @@ class SignalEngine:
                     # 转发实时价格给纸盘交易器（用于止损/盈亏追踪）
                     if self.paper_trader:
                         for sym, feat in snapshot.items():
-                            book = feat.get("book", {})
+                            book = feat.get("book") or {}
                             mid = book.get("mid_price", 0)
                             if mid > 0:
                                 self.paper_trader.on_price_update(sym, mid)

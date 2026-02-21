@@ -174,7 +174,8 @@ class SignalBacktester:
         period_days = 0
         if records:
             time_range_ms = records[-1].entry_time_ms - records[0].entry_time_ms
-            period_days = time_range_ms / (86400 * 1000) if time_range_ms > 0 else 1
+            # 小时间窗会放大年化指标，最小按 1 天处理
+            period_days = max(time_range_ms / (86400 * 1000), 1.0) if time_range_ms > 0 else 1.0
 
         metrics = calculate_metrics(trades, period_days=period_days)
 

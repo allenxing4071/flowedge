@@ -84,24 +84,24 @@ function StatCard({
   color: string;
 }) {
   return (
-    <div className="rounded-xl bg-surface-1 border border-surface-3/50 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-lg">{icon}</span>
-        <span className="text-xxs text-text-tertiary uppercase tracking-wider">{label}</span>
+    <div className="rounded-xl bg-surface-1 border border-surface-3/50 p-4 sm:p-5">
+      <div className="flex items-center gap-2 mb-2.5">
+        <span className="text-xl">{icon}</span>
+        <span className="text-xs text-text-tertiary uppercase tracking-wider font-medium">{label}</span>
       </div>
-      <div className="text-xl md:text-2xl font-bold" style={{ color }}>
+      <div className="text-2xl md:text-3xl font-bold" style={{ color }}>
         {value}
       </div>
-      <div className="text-xs text-text-tertiary mt-1.5">{sub}</div>
+      <div className="text-sm text-text-tertiary mt-2">{sub}</div>
     </div>
   );
 }
 
 function MiniStat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div className="rounded-lg bg-surface-1 border border-surface-3/50 px-3 py-2.5">
-      <div className="text-xxs text-text-tertiary">{label}</div>
-      <div className="text-lg font-mono font-bold mt-0.5" style={{ color }}>
+    <div className="rounded-lg bg-surface-1 border border-surface-3/50 px-3.5 py-3">
+      <div className="text-xs text-text-tertiary">{label}</div>
+      <div className="text-xl font-mono font-bold mt-1" style={{ color }}>
         {value}
       </div>
     </div>
@@ -111,7 +111,7 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
 function CycleStatusBadge({ status }: { status: string }) {
   const config: Record<string, { bg: string; text: string }> = {
     success: { bg: 'bg-bull/15', text: 'text-bull' },
-    completed: { bg: 'bg-bull/15', text: 'text-bull' },
+    completed: { bg: 'bg-info/15', text: 'text-info' },
     running: { bg: 'bg-info/15', text: 'text-info' },
     failed: { bg: 'bg-bear/15', text: 'text-bear' },
     skipped: { bg: 'bg-surface-3', text: 'text-text-tertiary' },
@@ -119,7 +119,7 @@ function CycleStatusBadge({ status }: { status: string }) {
   };
   const c = config[status] || { bg: 'bg-surface-3', text: 'text-text-tertiary' };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${c.bg} ${c.text}`}>
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-sm font-semibold ${c.bg} ${c.text}`}>
       {statusLabel(status)}
     </span>
   );
@@ -177,9 +177,9 @@ export default function EvolutionPage() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm sm:text-base font-semibold tracking-tight">进化看板</span>
+                    <span className="text-base sm:text-lg font-semibold tracking-tight">进化看板</span>
                     {stats?.scheduler && (
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xxs font-semibold ${
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold ${
                         stats.scheduler.background_active
                           ? 'bg-bull/15 text-bull'
                           : 'bg-surface-3 text-text-tertiary'
@@ -188,7 +188,7 @@ export default function EvolutionPage() {
                       </span>
                     )}
                   </div>
-                  <span className="hidden sm:block text-xxs text-text-tertiary">
+                  <span className="hidden sm:block text-xs text-text-tertiary">
                     参数优化 · AI 评估 · 自动进化（北京时间）
                   </span>
                 </div>
@@ -199,7 +199,7 @@ export default function EvolutionPage() {
               <button
                 onClick={handleEvolveNow}
                 disabled={busy !== ''}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all bg-info/15 text-info border border-info/30 hover:bg-info/25 disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all bg-info/15 text-info border border-info/30 hover:bg-info/25 disabled:opacity-50"
               >
                 {busy === 'evolve' ? (
                   <span className="animate-pulse">触发中...</span>
@@ -222,12 +222,12 @@ export default function EvolutionPage() {
         )}
 
         {/* Tab 切换 */}
-        <div className="flex gap-1 p-1 rounded-lg bg-surface-1 border border-surface-3/50">
+        <div className="flex gap-1 p-1.5 rounded-xl bg-surface-1 border border-surface-3/50">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm sm:text-base font-medium transition-all ${
                 activeTab === tab.id
                   ? 'bg-info/15 text-info border border-info/30'
                   : 'text-text-tertiary hover:text-text-secondary border border-transparent'
@@ -277,7 +277,9 @@ function OverviewTab({
   const progressPct = minSamples > 0 ? Math.min((currentSamples / minSamples) * 100, 100) : 0;
 
   // 统计
-  const successHistory = history.filter((h) => h.status === 'success');
+  const successHistory = history.filter(
+    (h) => h.status === 'success' || h.status === 'completed' || h.status === 'pending_approval'
+  );
   const appliedCount = history.filter((h) => h.applied).length;
   const totalSignals = dataInfo?.total_records ?? 0;
 
@@ -324,11 +326,11 @@ function OverviewTab({
       </div>
 
       {/* 数据积累进度条 */}
-      <div className="rounded-xl bg-surface-1 border border-surface-3/50 p-4">
+      <div className="rounded-xl bg-surface-1 border border-surface-3/50 p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-text-primary">📊 数据积累进度</span>
-            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xxs font-semibold ${
+            <span className="text-base font-semibold text-text-primary">📊 数据积累进度</span>
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold ${
               progressPct >= 100
                 ? 'bg-bull/15 text-bull'
                 : 'bg-info/15 text-info'
@@ -336,11 +338,11 @@ function OverviewTab({
               {progressPct >= 100 ? '样本已就绪' : '采集中'}
             </span>
           </div>
-          <span className="text-xs text-text-tertiary font-mono">
+          <span className="text-sm text-text-tertiary font-mono">
             {currentSamples} / {minSamples} 已验证信号
           </span>
         </div>
-        <div className="h-2 bg-surface-3/50 rounded-full overflow-hidden">
+        <div className="h-2.5 sm:h-3 bg-surface-3/50 rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-600 ease-out"
             style={{
@@ -591,14 +593,16 @@ function HistoryTab({
 
   // 统计摘要
   const totalCycles = history.length;
-  const successCount = history.filter((h) => h.status === 'success').length;
+  const completedCount = history.filter(
+    (h) => h.status === 'success' || h.status === 'completed' || h.status === 'pending_approval'
+  ).length;
   const appliedCount = history.filter((h) => h.applied).length;
   const avgValidation =
-    successCount > 0
+    completedCount > 0
       ? (
           history
-            .filter((h) => h.status === 'success')
-            .reduce((s, h) => s + h.validation_score, 0) / successCount * 100
+            .filter((h) => h.status === 'success' || h.status === 'completed' || h.status === 'pending_approval')
+            .reduce((s, h) => s + h.validation_score, 0) / completedCount * 100
         ).toFixed(1)
       : '0';
   const avgDuration =
@@ -611,7 +615,7 @@ function HistoryTab({
       {/* 统计摘要 */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <MiniStat label="总周期" value={String(totalCycles)} color="#f0f0f5" />
-        <MiniStat label="成功" value={String(successCount)} color="#00e676" />
+        <MiniStat label="完成" value={String(completedCount)} color="#00e676" />
         <MiniStat label="已应用" value={String(appliedCount)} color="#448aff" />
         <MiniStat label="平均验证得分" value={`${avgValidation}%`} color="#d500f9" />
         <MiniStat label="平均耗时" value={`${avgDuration}s`} color="#8888a0" />
@@ -679,44 +683,50 @@ function HistoryTab({
       </div>
 
       {/* 移动端卡片列表 */}
-      <div className="sm:hidden space-y-2">
+      <div className="sm:hidden space-y-3">
         {history.map((h, idx) => (
           <div
             key={h.cycle_id || `mc-${idx}`}
-            className={`rounded-xl bg-surface-1 border border-surface-3/50 border-l-2 p-3 space-y-2 ${
-              h.status === 'success' ? 'border-l-bull' : h.status === 'failed' ? 'border-l-bear' : 'border-l-surface-3'
+            className={`rounded-xl bg-surface-1 border border-surface-3/50 border-l-3 p-4 space-y-3 ${
+              h.status === 'success'
+                ? 'border-l-bull'
+                : h.status === 'completed'
+                  ? 'border-l-info'
+                  : h.status === 'failed'
+                    ? 'border-l-bear'
+                    : 'border-l-surface-3'
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="font-mono text-xs text-text-secondary truncate max-w-[160px]">
+              <span className="font-mono text-sm text-text-secondary truncate max-w-[180px]">
                 {h.cycle_id}
               </span>
               <CycleStatusBadge status={h.status} />
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
-                <span className="text-text-tertiary">时间</span>
-                <div className="text-text-secondary">{formatDateTimeBJT(h.started_at)}</div>
+                <span className="text-text-tertiary text-xs">时间</span>
+                <div className="text-text-secondary mt-0.5">{formatDateTimeBJT(h.started_at)}</div>
               </div>
               <div>
-                <span className="text-text-tertiary">AI评级</span>
-                <div className={`font-bold ${gradeColor(h.ai_grade)}`}>{h.ai_grade || '--'}</div>
+                <span className="text-text-tertiary text-xs">AI评级</span>
+                <div className={`font-bold text-lg mt-0.5 ${gradeColor(h.ai_grade)}`}>{h.ai_grade || '--'}</div>
               </div>
               <div>
-                <span className="text-text-tertiary">验证得分</span>
-                <div className="text-text-secondary font-mono">
+                <span className="text-text-tertiary text-xs">验证得分</span>
+                <div className="text-text-secondary font-mono mt-0.5">
                   {h.validation_passed ? `${(h.validation_score * 100).toFixed(0)}%` : '--'}
                 </div>
               </div>
               <div>
-                <span className="text-text-tertiary">应用</span>
-                <div className={h.applied ? 'text-bull' : 'text-text-tertiary'}>
+                <span className="text-text-tertiary text-xs">应用</span>
+                <div className={`mt-0.5 font-medium ${h.applied ? 'text-bull' : 'text-text-tertiary'}`}>
                   {h.applied ? '已应用' : '未应用'}
                 </div>
               </div>
             </div>
             {h.ai_summary && (
-              <div className="text-xxs text-text-tertiary bg-surface-2/50 rounded px-2 py-1.5">
+              <div className="text-xs text-text-tertiary bg-surface-2/50 rounded-lg px-3 py-2">
                 {h.ai_summary}
               </div>
             )}

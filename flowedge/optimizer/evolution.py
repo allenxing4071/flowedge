@@ -42,8 +42,8 @@ logger = logging.getLogger("flowedge.optimizer.evolution")
 class EvolutionConfig:
     """进化循环配置"""
     # 数据要求
-    min_signals: int = 30               # 最少信号数
-    min_new_signals: int = 10           # 最少新增信号数（相比上次进化）
+    min_signals: int = 20               # 最少信号数（积累 20 条即触发）
+    min_new_signals: int = 20           # 最少新增信号数（相比上次进化）
     # 优化
     n_trials: int = 100
     param_groups: list[str] = field(
@@ -66,7 +66,7 @@ class EvolutionCycle:
     cycle_id: str
     started_at: str
     finished_at: Optional[str] = None
-    status: str = "running"             # running / success / failed / skipped / pending_approval
+    status: str = "running"             # running / success / completed / failed / skipped / pending_approval
 
     # 数据阶段
     total_signals: int = 0
@@ -136,8 +136,8 @@ class EvolutionEngine:
         # 加载历史
         self._load_history()
 
-    def evolve(self, config: Optional[EvolutionConfig] = None) -> EvolutionCycle:
-        """执行一轮完整进化"""
+    def evolve(self, config: Optional[EvolutionConfig] = None, force: bool = False) -> EvolutionCycle:
+        """执行一轮完整进化。force=True 时跳过新增信号检查（手动触发用）"""
         cfg = config or self._config
         cycle_id = f"evo_{int(time.time())}"
         cycle = EvolutionCycle(
@@ -157,15 +157,23 @@ class EvolutionEngine:
                 logger.warning(f"[Evolution] {cycle.failure_reason}")
                 return cycle
 
-            # 检查新增信号数
+            # 检查新增信号数（手动触发 force=True 时跳过此检查）
             last_total = self._cycles[-1].total_signals if self._cycles else 0
             cycle.new_signals = max(0, len(records) - last_total)
 
-            if cycle.new_signals < cfg.min_new_signals and self._cycles:
+            if not force and cycle.new_signals < cfg.min_new_signals and self._cycles:
                 cycle.status = "skipped"
                 cycle.failure_reason = f"新增信号不足: {cycle.new_signals} < {cfg.min_new_signals}"
                 logger.warning(f"[Evolution] {cycle.failure_reason}")
                 return cycle
+
+            # 根据数据量自适应 n_trials（数据少时减少试验次数，降低过拟合风险）
+            quality = self._data_manager.quality_check()
+            date_range_days = float(getattr(quality, "date_range_days", 0))
+            adaptive_n_trials = cfg.n_trials
+            if date_range_days < 7:
+                adaptive_n_trials = min(cfg.n_trials, 50)
+                logger.info(f"[Evolution] 数据跨度 {date_range_days:.1f} 天 < 7 天，降低 n_trials 至 {adaptive_n_trials}")
 
             # ── Step 2: 数据分割 ──
             split = self._data_manager.time_split(records, train_pct=0.7, val_pct=0, test_pct=0.3)
@@ -177,7 +185,7 @@ class EvolutionEngine:
 
             opt_config = OptimizationConfig(
                 mode="single",
-                n_trials=cfg.n_trials,
+                n_trials=adaptive_n_trials,
                 param_groups=cfg.param_groups,
                 backtest_config=BacktestConfig(),
             )
@@ -214,8 +222,8 @@ class EvolutionEngine:
             cycle.validation_score = val_result.overall_score
 
             if not val_result.passed:
-                cycle.status = "failed"
-                cycle.failure_reason = "验证未通过: " + "; ".join(
+                cycle.status = "completed"
+                cycle.failure_reason = "候选参数未通过验证，已保留当前参数: " + "; ".join(
                     w for lr in val_result.layers for w in lr.warnings
                 )
                 logger.warning(f"[Evolution] {cycle.failure_reason}")
@@ -283,8 +291,8 @@ class EvolutionEngine:
                     cycle.status = "pending_approval"
                     logger.info(f"[Evolution] 进化完成，等待人工确认应用")
             elif val_result.passed:
-                cycle.status = "failed"
-                cycle.failure_reason = f"AI 评级 {cycle.ai_grade} 低于要求 {cfg.min_grade}"
+                cycle.status = "completed"
+                cycle.failure_reason = f"AI 评级 {cycle.ai_grade} 低于要求 {cfg.min_grade}，未应用参数"
             # else: 验证失败已在上面处理
 
         except Exception as e:
@@ -332,9 +340,14 @@ class EvolutionEngine:
 
     def get_status(self) -> dict:
         """获取进化引擎状态"""
+        completed = sum(
+            1 for c in self._cycles if c.status in {"success", "completed", "pending_approval"}
+        )
         return {
             "total_cycles": len(self._cycles),
-            "successful": sum(1 for c in self._cycles if c.status == "success"),
+            "successful": completed,
+            "applied_success": sum(1 for c in self._cycles if c.status == "success"),
+            "completed_no_apply": sum(1 for c in self._cycles if c.status == "completed"),
             "failed": sum(1 for c in self._cycles if c.status == "failed"),
             "skipped": sum(1 for c in self._cycles if c.status == "skipped"),
             "pending": sum(1 for c in self._cycles if c.status == "pending_approval"),

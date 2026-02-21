@@ -842,7 +842,7 @@ async def get_factor_ic_analysis():
 
 @router.post("/evolve")
 async def run_evolution(background_tasks: BackgroundTasks):
-    """执行一轮完整进化（后台执行）"""
+    """手动执行一轮完整进化（后台执行，跳过新增信号冷却检查）"""
     if not _evolution:
         raise HTTPException(500, "进化引擎未初始化")
     if _optimizer and _optimizer.is_running:
@@ -850,7 +850,8 @@ async def run_evolution(background_tasks: BackgroundTasks):
 
     def _run():
         try:
-            _evolution.evolve()
+            # 手动触发 force=True，跳过"新增信号不足"检查
+            _evolution.evolve(force=True)
         except RuntimeError as e:
             logger.warning(f"进化被跳过: {e}")
         except Exception as e:

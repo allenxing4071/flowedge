@@ -47,10 +47,10 @@ export default function Header() {
           {/* 左：品牌 */}
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-2">
-              <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-gradient-to-br from-info to-bull flex items-center justify-center">
-                <span className="text-[10px] sm:text-xs font-bold text-white">FE</span>
+              <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-gradient-to-br from-info to-bull flex items-center justify-center">
+                <span className="text-xs sm:text-sm font-bold text-white">FE</span>
               </div>
-              <span className="text-sm sm:text-base font-semibold tracking-tight">FlowEdge</span>
+              <span className="text-base sm:text-lg font-semibold tracking-tight">FlowEdge</span>
               <span className="hidden sm:inline text-xs text-text-tertiary font-mono">
                 v{st?.version || '...'}
               </span>
@@ -58,15 +58,16 @@ export default function Header() {
           </div>
 
           {/* 导航链接 */}
-          <nav className="hidden sm:flex items-center gap-1">
+          <nav className="flex items-center gap-1">
             <Link
               href="/evolution"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text-primary hover:bg-surface-2/50 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-text-secondary hover:text-text-primary hover:bg-surface-2/50 transition-colors"
             >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />
               </svg>
-              进化
+              <span className="hidden sm:inline">进化</span>
+              <span className="sm:hidden">🧬</span>
             </Link>
           </nav>
 
@@ -75,26 +76,26 @@ export default function Header() {
             {st && (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-text-tertiary">消息速率</span>
-                  <span className="mono-num text-text-primary font-semibold text-base">
+                  <span className="text-text-tertiary text-sm">消息速率</span>
+                  <span className="mono-num text-text-primary font-semibold text-lg">
                     {formatRate(st.msg_rate_approx)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-text-tertiary">运行</span>
-                  <span className="mono-num text-text-primary font-semibold text-base">
+                  <span className="text-text-tertiary text-sm">运行</span>
+                  <span className="mono-num text-text-primary font-semibold text-lg">
                     {formatUptime(st.uptime_s)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-text-tertiary">数据源</span>
-                  <span className="mono-num text-text-primary font-semibold text-base">
+                  <span className="text-text-tertiary text-sm">数据源</span>
+                  <span className="mono-num text-text-primary font-semibold text-lg">
                     {Object.values(st.data_sources).filter(Boolean).length}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-text-tertiary">特征</span>
-                  <span className="mono-num text-text-primary font-semibold text-base">
+                  <span className="text-text-tertiary text-sm">特征</span>
+                  <span className="mono-num text-text-primary font-semibold text-lg">
                     {st.feature_count}
                   </span>
                 </div>
@@ -106,16 +107,16 @@ export default function Header() {
           <div className="flex items-center gap-2 sm:gap-3">
             {/* 手机端显示消息速率 */}
             {st && (
-              <span className="lg:hidden text-xxs mono-num text-text-tertiary">
+              <span className="lg:hidden text-xs mono-num text-text-tertiary">
                 {formatRate(st.msg_rate_approx)}
               </span>
             )}
-            <div className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xxs sm:text-xs font-semibold ${
+            <div className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-semibold ${
               isConnected
                 ? 'bg-bull-glow text-bull'
                 : 'bg-bear-glow text-bear'
             }`}>
-              <div className={`h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full ${
+              <div className={`h-2 w-2 sm:h-2.5 sm:w-2.5 rounded-full ${
                 isConnected ? 'bg-bull animate-pulse-slow' : 'bg-bear'
               }`} />
               {isConnected ? '在线' : '离线'}

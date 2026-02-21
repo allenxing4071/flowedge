@@ -148,8 +148,8 @@ async def lifespan(app: FastAPI):
     agent = get_agent()
     if agent:
         async def _agent_auto_loop():
-            """Agent 自动循环：每 24 小时执行一次 plan + run"""
-            INTERVAL_S = 24 * 3600  # 每天一次
+            """Agent 自动循环：每 6 小时执行一次 plan + run（早期阶段更频繁）"""
+            INTERVAL_S = 6 * 3600  # 每 6 小时一次
             # 首次等待 10 分钟，让数据先积累一些
             await asyncio.sleep(600)
             while True:
@@ -165,7 +165,7 @@ async def lifespan(app: FastAPI):
                 await asyncio.sleep(INTERVAL_S)
 
         _tasks.append(asyncio.create_task(_agent_auto_loop()))
-        logger.info("[FlowEdge] Agent 总控已启动（每 24h 自动决策）")
+        logger.info("[FlowEdge] Agent 总控已启动（每 6h 自动决策）")
 
     # 数据源状态摘要
     sources = []

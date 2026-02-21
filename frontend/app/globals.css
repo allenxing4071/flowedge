@@ -15,7 +15,7 @@
   }
 
   body {
-    @apply bg-surface-0 text-text-primary font-sans;
+    @apply bg-surface-0 text-text-primary font-sans text-sm sm:text-base;
     font-feature-settings: "ss01", "cv01", "cv11";
   }
 
@@ -51,7 +51,7 @@
 
   /* 信号徽章 */
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium tracking-wide;
+    @apply inline-flex items-center px-2.5 py-1 rounded-md text-xs sm:text-sm font-medium tracking-wide;
   }
   .badge-bull {
     @apply badge bg-bull-dim text-bull;
@@ -76,7 +76,7 @@
 
   /* 得分条 */
   .score-bar {
-    @apply h-1.5 rounded-full transition-all duration-500 ease-out;
+    @apply h-2 sm:h-2.5 rounded-full transition-all duration-500 ease-out;
   }
 
   /* 脉冲点 */

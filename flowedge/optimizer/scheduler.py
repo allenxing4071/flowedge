@@ -41,7 +41,7 @@ class SchedulerConfig:
     check_interval_s: int = 300
     # 数据窗口
     lookback_days: int = 14             # 回看天数（取最近 N 天数据）
-    min_samples: int = 30               # 首轮最小样本量
+    min_samples: int = 20               # 首轮最小样本量（积累 20 条即触发）
     min_new_signals: int = 20           # 后续轮次需要的新信号数量
     # 优化配置
     n_trials: int = 100                 # Optuna 试验次数
@@ -173,15 +173,22 @@ class OptimizationScheduler:
                 run.failure_reason = f"训练集不足: {len(train_data)}"
                 return run
 
-            # Step 3: 执行优化
+            # Step 3: 执行优化（根据数据量自适应 n_trials）
+            quality = self._data_manager.quality_check()
+            date_range_days = float(getattr(quality, "date_range_days", 0))
+            adaptive_n_trials = cfg.n_trials
+            if date_range_days < 7:
+                adaptive_n_trials = min(cfg.n_trials, 50)
+                logger.info(f"[Scheduler] 数据跨度 {date_range_days:.1f} 天 < 7 天，降低 n_trials 至 {adaptive_n_trials}")
+
             logger.info(
                 f"[Scheduler] 开始优化: {len(train_data)} 条训练数据, "
-                f"{cfg.n_trials} trials, mode={cfg.optimization_mode}"
+                f"{adaptive_n_trials} trials, mode={cfg.optimization_mode}"
             )
 
             opt_config = OptimizationConfig(
                 mode=cfg.optimization_mode,
-                n_trials=cfg.n_trials,
+                n_trials=adaptive_n_trials,
                 param_groups=cfg.param_groups,
                 objective_metric=cfg.objective_metric,
                 backtest_config=cfg.backtest_config,
@@ -276,6 +283,8 @@ class OptimizationScheduler:
         """
         检查是否应该触发优化。
         返回 (should_trigger, reason)。
+
+        增强：检查数据时间跨度，太短的数据会导致严重过拟合。
         """
         if self._is_running:
             return False, "优化正在运行中"
@@ -285,6 +294,7 @@ class OptimizationScheduler:
             quality = self._data_manager.quality_check()
             current_count = int(getattr(quality, "total_records", 0))
             records_with_1h = int(getattr(quality, "records_with_1h", 0))
+            date_range_days = float(getattr(quality, "date_range_days", 0))
         except Exception as e:
             return False, f"数据查询异常: {e}"
 

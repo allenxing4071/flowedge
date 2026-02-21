@@ -49,10 +49,10 @@ function CollapsibleSection({
     <div>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between py-3 px-1 text-sm text-text-tertiary hover:text-text-secondary transition-colors group"
+        className="w-full flex items-center justify-between py-3.5 px-1 text-base text-text-tertiary hover:text-text-secondary transition-colors group"
       >
-        <span className="font-medium">{title}</span>
-        <span className={`text-xs transition-transform duration-200 ${open ? 'rotate-180' : ''}`}>
+        <span className="font-semibold">{title}</span>
+        <span className={`text-sm transition-transform duration-200 ${open ? 'rotate-180' : ''}`}>
           ▼
         </span>
       </button>
@@ -84,8 +84,8 @@ function OrderFlowSection({
       {/* 标题 + Tab 切换 */}
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-text-primary">订单流</span>
-          <span className="text-xxs text-text-tertiary">订单流可视化</span>
+          <span className="text-base font-semibold text-text-primary">订单流</span>
+          <span className="text-xs text-text-tertiary">订单流可视化</span>
         </div>
 
         {/* 币种 Tab — 用 symbol 名切换，不用索引 */}
@@ -101,10 +101,10 @@ function OrderFlowSection({
                   : 'text-text-secondary';
 
               return (
-                <button
+                  <button
                   key={sym}
                   onClick={() => setActiveSymbol(sym)}
-                  className={`px-3 py-1.5 text-xs rounded-md transition-all ${
+                  className={`px-3.5 py-2 text-sm rounded-md transition-all ${
                     isActive
                       ? 'bg-surface-1 text-text-primary shadow-sm font-medium'
                       : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-1/50'
@@ -112,7 +112,7 @@ function OrderFlowSection({
                 >
                   <span className="font-mono">{sym.replace('USDT', '')}</span>
                   {isActive && (
-                    <span className={`ml-1.5 text-xxs ${signalColor}`}>
+                    <span className={`ml-1.5 text-xs ${signalColor}`}>
                       {currentSignal.score > 0 ? '+' : ''}{(currentSignal.score * 100).toFixed(0)}
                     </span>
                   )}
@@ -158,8 +158,8 @@ function LoadingState() {
           <span className="text-sm font-bold text-white">FE</span>
         </div>
       </div>
-      <div className="text-sm text-text-secondary">连接 FlowEdge...</div>
-      <div className="text-xxs text-text-tertiary">正在获取实时数据</div>
+      <div className="text-base text-text-secondary">连接 FlowEdge...</div>
+      <div className="text-sm text-text-tertiary">正在获取实时数据</div>
     </div>
   );
 }
@@ -170,9 +170,9 @@ function ErrorState({ message }: { message: string }) {
       <div className="h-12 w-12 rounded-xl bg-bear/20 flex items-center justify-center">
         <span className="text-lg text-bear">!</span>
       </div>
-      <div className="text-sm text-bear font-medium">连接失败</div>
-      <div className="text-xs text-text-tertiary max-w-md text-center">{message}</div>
-      <div className="text-xxs text-text-tertiary mt-2">
+      <div className="text-base text-bear font-medium">连接失败</div>
+      <div className="text-sm text-text-tertiary max-w-md text-center">{message}</div>
+      <div className="text-xs text-text-tertiary mt-2">
         请确保 FlowEdge 后端正在运行 (默认端口 8005)
       </div>
     </div>
@@ -188,7 +188,7 @@ function Dashboard({ data, gateStatus }: { data: DashboardData; gateStatus: Gate
   });
 
   return (
-    <div className="w-full px-3 sm:px-4 lg:px-6 py-3 sm:py-4 space-y-4 sm:space-y-5">
+    <div className="w-full px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-5 sm:space-y-6">
 
       {/* ═══ 第一行：信号分布概览 ═══ */}
       <SignalSummary data={data} />
@@ -235,8 +235,8 @@ function Dashboard({ data, gateStatus }: { data: DashboardData; gateStatus: Gate
       </SafePanel>
 
       {/* ═══ 折叠区：次要面板 ═══ */}
-      <div className="space-y-1 border-t border-surface-3/30 pt-3 sm:pt-4">
-        <div className="text-xxs text-text-tertiary uppercase tracking-wider mb-2 px-1">
+      <div className="space-y-1.5 border-t border-surface-3/30 pt-4 sm:pt-5">
+        <div className="text-xs text-text-tertiary uppercase tracking-wider mb-2.5 px-1 font-medium">
           详细分析
         </div>
 

@@ -55,7 +55,8 @@ module.exports = {
         mono: ['JetBrains Mono', 'SF Mono', 'monospace'],
       },
       fontSize: {
-        'xxs': ['0.625rem', { lineHeight: '0.875rem' }],
+        'xxs': ['0.6875rem', { lineHeight: '1rem' }],    /* 11px，原 10px，手机端更易读 */
+        'xs': ['0.8125rem', { lineHeight: '1.125rem' }],  /* 13px，原 12px */
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',

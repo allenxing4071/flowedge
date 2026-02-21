@@ -477,6 +477,7 @@ export function gradeBg(grade: string): string {
 export function statusColor(status: string): string {
   switch (status) {
     case 'success': return 'text-bull';
+    case 'completed': return 'text-info';
     case 'failed': return 'text-bear';
     case 'skipped': return 'text-text-tertiary';
     case 'pending_approval': return 'text-warn';
@@ -488,6 +489,7 @@ export function statusColor(status: string): string {
 export function statusLabel(status: string): string {
   switch (status) {
     case 'success': return '成功';
+    case 'completed': return '已完成';
     case 'failed': return '失败';
     case 'skipped': return '跳过';
     case 'pending_approval': return '待确认';

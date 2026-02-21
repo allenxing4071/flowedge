@@ -277,7 +277,16 @@ export async function fetchSchedulerHistory(limit = 20) {
 
 export async function triggerEvolveNow() {
   const res = await fetch(`${API_BASE}/optimizer/evolve`, { method: 'POST' });
-  if (!res.ok) throw new Error(`触发进化失败: ${res.status}`);
+  if (!res.ok) {
+    // 尝试解析后端返回的具体错误信息
+    try {
+      const err = await res.json();
+      throw new Error(err.detail || `触发进化失败: ${res.status}`);
+    } catch (e) {
+      if (e instanceof Error && !e.message.startsWith('触发进化失败')) throw e;
+      throw new Error(`触发进化失败: ${res.status}`);
+    }
+  }
   return res.json();
 }
 

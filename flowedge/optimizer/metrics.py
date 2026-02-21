@@ -24,6 +24,13 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
+# 小样本高频数据下，Sharpe 容易被年化和低波动率放大，这里加稳态保护。
+MIN_TRADES_FOR_SHARPE = 20
+SHARPE_SIGMA_FLOOR = 0.12
+MIN_PERIOD_DAYS = 1.0
+MAX_ANNUAL_TRADES_PER_DAY = 120.0
+MAX_ABS_SHARPE = 12.0
+
 
 @dataclass
 class TradeResult:
@@ -97,6 +104,7 @@ def calculate_metrics(
 
     m.total_trades = len(trades)
     pnls = [t.pnl_pct for t in trades]
+    period_days_safe = max(period_days or MIN_PERIOD_DAYS, MIN_PERIOD_DAYS)
 
     # ── 基础统计 ──
     wins = [p for p in pnls if p > 0]
@@ -114,21 +122,24 @@ def calculate_metrics(
     m.max_loss_pct = min(pnls) if pnls else 0
 
     # ── Sharpe Ratio ──
-    if len(pnls) >= 2:
+    if len(pnls) >= MIN_TRADES_FOR_SHARPE:
         mean_pnl = sum(pnls) / len(pnls)
-        std_pnl = _std(pnls)
+        std_pnl = max(_std(pnls), SHARPE_SIGMA_FLOOR)
         if std_pnl > 0:
-            # 年化：假设每天 N 笔交易
-            trades_per_day = m.total_trades / period_days if period_days and period_days > 0 else 10
+            # 年化：对交易频率做上限保护，避免超高频样本造成 Sharpe 失真
+            trades_per_day = m.total_trades / period_days_safe
+            trades_per_day = min(trades_per_day, MAX_ANNUAL_TRADES_PER_DAY)
             annualization = math.sqrt(trades_per_day * 365)
-            m.sharpe_ratio = round((mean_pnl - risk_free_rate / 365) / std_pnl * annualization, 4)
+            raw_sharpe = (mean_pnl - risk_free_rate / 365) / std_pnl * annualization
+            raw_sharpe = max(-MAX_ABS_SHARPE, min(MAX_ABS_SHARPE, raw_sharpe))
+            m.sharpe_ratio = round(raw_sharpe, 4)
 
     # ── Max Drawdown ──
     m.max_drawdown_pct = _max_drawdown(pnls)
 
     # ── Calmar Ratio ──
-    if m.max_drawdown_pct < 0 and period_days and period_days > 0:
-        annual_return = m.total_pnl_pct * (365 / period_days)
+    if m.max_drawdown_pct < 0:
+        annual_return = m.total_pnl_pct * (365 / period_days_safe)
         m.calmar_ratio = round(annual_return / abs(m.max_drawdown_pct), 4)
 
     # ── Profit Factor ──
@@ -153,7 +164,7 @@ def calculate_metrics(
     m.max_consecutive_wins, m.max_consecutive_losses = _consecutive_streaks(pnls)
 
     # ── 元信息 ──
-    m.period_days = period_days or 0
+    m.period_days = period_days_safe
     hold_times = [t.hold_time_s for t in trades if t.hold_time_s > 0]
     m.avg_hold_time_s = sum(hold_times) / len(hold_times) if hold_times else 0
 
